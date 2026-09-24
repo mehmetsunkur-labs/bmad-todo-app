@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Todos key screens</title>
+<style>
+/*
+  Key-screen mock: Todo List view (the only surface).
+  Governing spine sections - check these when the spines change:
+    DESIGN.md: frontmatter tokens (colors, typography, spacing, components), Colors,
+               Typography, Layout & Spacing, Elevation & Depth, Components, Do's and Don'ts.
+    EXPERIENCE.md: Voice and Tone (all strings), Component Patterns (Add row, Todo row,
+               Completion checkbox, Inline edit field, Created At time, Toast, Character counter),
+               State Patterns (List States: Loading/Empty/Populated/Error), Interaction Primitives
+               (hover vs touch visibility), Responsive & Platform.
+  Inherited tokens = shadcn "neutral" defaults. Spines win on conflict; this mock only illustrates.
+*/
+:root{
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --radius: 10px;           /* shadcn --radius 0.625rem */
+  --radius-md: 8px;         /* inputs/buttons (rounded-md) */
+}
+.light{
+  --background:#FFFFFF; --foreground:#0A0A0A; --muted-foreground:#737373;
+  --border:#E5E5E5; --input:#E5E5E5; --destructive:#E7000B;
+  --accent-skel:#F5F5F5; --secondary:#F5F5F5; --secondary-foreground:#171717;
+  --primary:#2F6F6A; --primary-foreground:#FFFFFF; --ring:#2F6F6A;
+  --popover:#FFFFFF;
+}
+.dark{
+  --background:#0A0A0A; --foreground:#FAFAFA; --muted-foreground:#A1A1A1;
+  --border:rgba(255,255,255,.10); --input:rgba(255,255,255,.15); --destructive:#FF6467;
+  --accent-skel:#262626; --secondary:#262626; --secondary-foreground:#FAFAFA;
+  --primary:#5FB3AA; --primary-foreground:#0A0A0A; --ring:#5FB3AA;
+  --popover:#171717;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#F0F0F0;color:#0A0A0A;font-family:var(--font);padding:24px 16px 48px}
+.legend{max-width:1240px;margin:0 auto 24px;font-size:13px;line-height:1.5;color:#404040;
+  border:1px solid #D4D4D4;background:#FFFFFF;border-radius:8px;padding:12px 16px}
+.legend strong{color:#0A0A0A}
+.board{max-width:1240px;margin:0 auto;display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start}
+.panel{flex:0 0 auto}
+.panel-label{font-size:12px;font-weight:600;letter-spacing:.02em;color:#404040;margin:0 0 8px;max-width:624px}
+.panel-label span{font-weight:400;color:#737373}
+
+/* Browser/device frames */
+.frame{border:1px solid #CFCFCF;border-radius:12px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.06);position:relative}
+.frame .chrome{height:28px;background:#E5E5E5;display:flex;align-items:center;gap:6px;padding:0 10px}
+.frame.dark .chrome{background:#262626}
+.frame .chrome i{width:9px;height:9px;border-radius:50%;background:#BDBDBD;display:block}
+.frame.dark .chrome i{background:#525252}
+.desktop{width:624px}   /* 576 content + 2 x 24 gutter */
+.phone{width:360px;border-radius:24px}
+.phone .chrome{justify-content:center}
+.phone .chrome i{width:48px;height:5px;border-radius:3px}
+
+/* App surface */
+.app{background:var(--background);color:var(--foreground);font-family:var(--font);min-height:420px}
+.desktop .app{padding:64px 24px 48px}
+.phone .app{padding:24px 16px 32px}
+.col{max-width:576px;margin:0 auto}
+h1.app-title{font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-0.01em;margin:0 0 24px}
+
+/* Add row */
+.add-form{margin:0 0 8px}
+.add-row{display:flex;gap:8px}
+.input{flex:1;min-width:0;height:44px;border:1px solid var(--input);border-radius:var(--radius-md);
+  background:transparent;color:var(--foreground);font:400 16px/1.5 var(--font);padding:0 12px;
+  display:flex;align-items:center;white-space:nowrap;overflow:hidden}
+.dark .input{background:rgba(255,255,255,.045)}
+.input .ph{color:var(--muted-foreground)}
+.input.clip{justify-content:flex-end}  /* long value scrolled to caret end */
+.btn{height:44px;border-radius:var(--radius-md);font:500 14px/1 var(--font);padding:0 16px;border:0;
+  display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.btn-primary{background:var(--primary);color:var(--primary-foreground)}
+.btn-secondary{background:var(--secondary);color:var(--secondary-foreground)}
+.disabled{opacity:.5;pointer-events:none}
+.counter-line{display:flex;justify-content:flex-end;padding-right:60px;margin-top:4px}
+.counter{font-size:12px;line-height:1.4;color:var(--muted-foreground)}
+.counter.at-limit{color:var(--destructive)}
+.focus{outline:2px solid var(--ring);outline-offset:2px}
+
+/* List */
+ul.list{list-style:none;margin:16px 0 0;padding:0}
+.row{display:flex;align-items:flex-start;gap:4px;padding:12px 0;min-height:44px;border-bottom:1px solid var(--border);background:transparent}
+.cb-hit{width:44px;height:44px;margin:-10px 0 -10px -14px;display:flex;align-items:center;justify-content:center;flex:0 0 44px}
+.cb{width:16px;height:16px;border-radius:4px;border:1px solid var(--input);display:flex;align-items:center;justify-content:center;background:transparent}
+.dark .cb{background:rgba(255,255,255,.045)}
+.cb.checked{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}
+.body{flex:1;min-width:0}
+.desc{font-size:16px;font-weight:400;line-height:1.5;overflow-wrap:anywhere;margin:0}
+.done .desc{color:var(--muted-foreground);text-decoration:line-through}
+.meta{display:block;font-size:12px;line-height:1.4;color:var(--muted-foreground);margin-top:2px}
+.actions{display:flex;flex:0 0 auto;margin:-10px -12px -10px 0}
+.icon-btn{width:44px;height:44px;border-radius:var(--radius-md);display:flex;align-items:center;justify-content:center;color:var(--muted-foreground)}
+.icon-btn svg{width:16px;height:16px}
+.hoverable .actions{opacity:0}            /* hover-capable pointer: hidden until hover/focus-within */
+.hoverable .row.is-hover .actions{opacity:1}
+.icon-btn.edit-hover{color:var(--foreground)}
+.icon-btn.del-hover{color:var(--destructive)}
+.edit-input{height:auto;min-height:36px;margin:-6px 0 0 -13px;padding:5px 12px;width:calc(100% + 13px)}
+.note{font-size:11px;color:#737373;margin-top:6px}
+
+/* Empty / Error */
+.state{text-align:center;padding:48px 0}
+.state .t{font-size:18px;font-weight:500;line-height:1.4;margin:0 0 4px}
+.state .b{font-size:14px;line-height:1.5;color:var(--muted-foreground);margin:0}
+.state .btn{margin-top:16px;height:44px}
+
+/* Skeleton */
+.sk{background:var(--accent-skel);border-radius:var(--radius-md)}
+.sk-row{display:flex;gap:16px;align-items:flex-start;padding:12px 0;min-height:44px;border-bottom:1px solid var(--border)}
+.sk-cb{width:16px;height:16px;border-radius:4px;margin-top:4px;flex:0 0 16px}
+.sk-lines{flex:1;display:flex;flex-direction:column;gap:6px}
+
+/* Toast (Sonner, error variant, bottom-right >= 640px) */
+.toast-wrap{position:absolute;right:24px;bottom:24px;width:356px}
+.toast{background:var(--popover);color:var(--foreground);border:1px solid var(--border);border-radius:var(--radius-md);
+  box-shadow:0 4px 12px rgba(0,0,0,.1);padding:16px;display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.45}
+.toast svg{width:16px;height:16px;flex:0 0 16px;color:var(--destructive);margin-top:1px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.pair{display:flex;gap:32px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+
+<div class="legend">
+  <strong>Todos: key-screen mock of the Todo List view.</strong> Illustration only. <strong>Spines win on conflict</strong>
+  (DESIGN.md for look, EXPERIENCE.md for behavior and copy). Inherited tokens use the shadcn neutral defaults; the only brand color is Quiet Teal
+  (#2F6F6A light, #5FB3AA dark), used for the checked checkbox, the Add button and the focus ring. Static, no JS.
+</div>
+
+<div class="board">
+
+<!-- ============ 1. Populated, desktop, light ============ -->
+<section class="panel">
+  <p class="panel-label">1. Populated: desktop (576px column), light <span>· row 2 in hover state; Edit/Delete hidden on the other rows (hover-capable pointer)</span></p>
+  <div class="frame desktop light">
+    <div class="chrome"><i></i><i></i><i></i></div>
+    <div class="app hoverable">
+      <div class="col">
+        <header><h1 class="app-title">Todos</h1></header>
+        <main>
+          <form class="add-form"><label class="sr">New todo</label>
+            <div class="add-row"><div class="input"><span class="ph">Add a todo…</span></div><button class="btn btn-primary" type="button">Add</button></div>
+          </form>
+          <ul class="list" aria-label="Todos">
+            <li class="row"><span class="cb-hit"><span class="cb"></span></span>
+              <div class="body"><p class="desc">Send Q3 access review reminder</p><time class="meta" datetime="2026-09-24T09:12">just now</time></div>
+              <div class="actions"><span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg></span><span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg></span></div></li>
+            <li class="row is-hover"><span class="cb-hit"><span class="cb"></span></span>
+              <div class="body"><p class="desc">Read the vendor security questionnaire before Thursday: https://intranet.example.com/procurement/vendors/2026/acme-analytics/security-questionnaire-v3-final-reviewed.pdf</p><time class="meta" datetime="2026-09-24T07:40">2h ago</time></div>
+              <div class="actions"><span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg></span><span class="icon-btn del-hover"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg></span></div></li>
+            <li class="row done"><span class="cb-hit"><span class="cb checked"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></span>
+              <div class="body"><p class="desc">Reply to IT ticket</p><time class="meta" datetime="2026-09-24T06:05">3h ago</time></div>
+              <div class="actions"><span class="icon-btn"></span><span class="icon-btn"></span></div></li>
+            <li class="row"><span class="cb-hit"><span class="cb"></span></span>
+              <div class="body"><p class="desc">Book room for retro</p><time class="meta" datetime="2026-09-23T16:20">yesterday</time></div>
+              <div class="actions"><span class="icon-btn"></span><span class="icon-btn"></span></div></li>
+            <li class="row done"><span class="cb-hit"><span class="cb checked"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></span>
+              <div class="body"><p class="desc">Renew parking permit</p><time class="meta" datetime="2026-09-12T10:00">Sep 12</time></div>
+              <div class="actions"><span class="icon-btn"></span><span class="icon-btn"></span></div></li>
+          </ul>
+        </main>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2. Populated, desktop, dark ============ -->
+<section class="panel">
+  <p class="panel-label">2. Populated: desktop, dark (prefers-color-scheme: dark) <span>· same list, same hover row</span></p>
+  <div class="frame desktop dark">
+    <div class="chrome"><i></i><i></i><i></i></div>
+    <div class="app hoverable">
+      <div class="col">
+        <header><h1 class="app-title">Todos</h1></header>
+        <main>
+          <form class="add-form"><div class="add-row"><div class="input"><span class="ph">Add a todo…</span></div><button class="btn btn-primary" type="button">Add</button></div></form>
+          <ul class="list" aria-label="Todos">
+            <li class="row"><span class="cb-hit"><span class="cb"></span></span>
+              <div class="body"><p class="desc">Send Q3 access review reminder</p><time class="meta">just now</time></div>
+              <div class="actions"><span class="icon-btn"></span><span class="icon-btn"></span></div></li>
+            <li class="row is-hover"><span class="cb-hit"><span class="cb"></span></span>
+              <div class="body"><p class="desc">Read the vendor security questionnaire before Thursday: https://intranet.example.com/procurement/vendors/2026/acme-analytics/security-questionnaire-v3-final-reviewed.pdf</p><time class="meta">2h ago</time></div>
+              <div class="actions"><span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg></span><span class="icon-btn del-hover"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg></span></div></li>
+            <li class="row done"><span class="cb-hit"><span class="cb checked"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></span>
+              <div class="body"><p class="desc">Reply to IT ticket</p><time class="meta">3h ago</time></div>
+              <div class="actions"><span class="icon-btn"></span><span class="icon-btn"></span></div></li>
+            <li class="row"><span class="cb-hit"><span class="cb"></span></span>
+              <div class="body"><p class="desc">Book room for retro</p><time class="meta">yesterday</time></div>
+              <div class="actions"><span class="icon-btn"></span><span class="icon-btn"></span></div></li>
+            <li class="row done"><span class="cb-hit"><span class="cb checked"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></span>
+              <div class="body"><p class="desc">Renew parking permit</p><time class="meta">Sep 12</time></div>
+              <div class="actions"><span class="icon-btn"></span><span class="icon-btn"></span></div></li>
+          </ul>
+        </main>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3. Mobile 360, light ============ -->
+<section class="panel">
+  <p class="panel-label">3. Mobile 360px, light (touch) <span>· Edit/Delete always visible; row 2 in inline edit (focus ring); counter shown at 463 chars (composite: two states in one frame)</span></p>
+  <div class="frame phone light">
+    <div class="chrome"><i></i></div>
+    <div class="app">
+      <div class="col">
+        <header><h1 class="app-title">Todos</h1></header>
+        <main>
+          <form class="add-form"><div class="add-row"><div class="input clip">…ops sync and circulate the revised draft to the leads by Friday</div><button class="btn btn-primary" type="button">Add</button></div>
+            <div class="counter-line"><span class="counter" aria-live="polite">463 / 500</span></div></form>
+          <ul class="list" aria-label="Todos">
+            <li class="row"><span class="cb-hit"><span class="cb"></span></span>
+              <div class="body"><p class="desc">Follow up with facilities</p><time class="meta">just now</time></div>
+              <div class="actions"><span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg></span><span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg></span></div></li>
+            <li class="row"><span class="cb-hit"><span class="cb"></span></span>
+              <div class="body"><div class="input edit-input focus"><span style="background:rgba(47,111,106,.22)">Book room for retro</span></div><time class="meta">yesterday</time></div>
+              <div class="actions"><span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg></span><span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg></span></div></li>
+            <li class="row done"><span class="cb-hit"><span class="cb checked"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></span>
+              <div class="body"><p class="desc">Reply to IT ticket</p><time class="meta">3h ago</time></div>
+              <div class="actions"><span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg></span><span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg></span></div></li>
+            <li class="row"><span class="cb-hit"><span class="cb"></span></span>
+              <div class="body"><p class="desc">Check https://status.example.com/incidents/2026-09-23-sso-degradation-postmortem</p><time class="meta">Sep 12</time></div>
+              <div class="actions"><span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg></span><span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg></span></div></li>
+          </ul>
+        </main>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 4. Empty + Loading, light ============ -->
+<section class="panel">
+  <p class="panel-label">4a. Empty state, light <span>· add row enabled (auto-focused on desktop)</span></p>
+  <div class="frame desktop light">
+    <div class="chrome"><i></i><i></i><i></i></div>
+    <div class="app" style="min-height:340px">
+      <div class="col">
+        <header><h1 class="app-title">Todos</h1></header>
+        <main>
+          <form class="add-form"><div class="add-row"><div class="input focus"><span class="ph">Add a todo…</span></div><button class="btn btn-primary" type="button">Add</button></div></form>
+          <div class="state"><p class="t">Nothing here yet.</p><p class="b">Add your first todo above.</p></div>
+        </main>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <p class="panel-label">4b. Loading skeleton, light <span>· shown after 300 ms; add row visible but disabled; list aria-busy, skeletons aria-hidden</span></p>
+  <div class="frame desktop light">
+    <div class="chrome"><i></i><i></i><i></i></div>
+    <div class="app" style="min-height:340px">
+      <div class="col">
+        <header><h1 class="app-title">Todos</h1></header>
+        <main>
+          <form class="add-form"><div class="add-row disabled"><div class="input"><span class="ph">Add a todo…</span></div><button class="btn btn-primary" type="button" disabled>Add</button></div></form>
+          <div aria-busy="true" style="margin-top:16px">
+            <div class="sk-row" aria-hidden="true"><div class="sk sk-cb"></div><div class="sk-lines"><div class="sk" style="height:16px;width:62%"></div><div class="sk" style="height:10px;width:14%"></div></div></div>
+            <div class="sk-row" aria-hidden="true"><div class="sk sk-cb"></div><div class="sk-lines"><div class="sk" style="height:16px;width:88%"></div><div class="sk" style="height:16px;width:40%"></div></div></div>
+            <div class="sk-row" aria-hidden="true"><div class="sk sk-cb"></div><div class="sk-lines"><div class="sk" style="height:16px;width:45%"></div><div class="sk" style="height:10px;width:12%"></div></div></div>
+            <div class="sk-row" aria-hidden="true"><div class="sk sk-cb"></div><div class="sk-lines"><div class="sk" style="height:16px;width:70%"></div><div class="sk" style="height:10px;width:16%"></div></div></div>
+          </div>
+        </main>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5. Load error, dark ============ -->
+<section class="panel">
+  <p class="panel-label">5. Load error, dark <span>· add row visible but disabled (no layout jump); role="alert"; "Try again" = secondary Button, returns to Loading</span></p>
+  <div class="frame desktop dark">
+    <div class="chrome"><i></i><i></i><i></i></div>
+    <div class="app" style="min-height:340px">
+      <div class="col">
+        <header><h1 class="app-title">Todos</h1></header>
+        <main>
+          <form class="add-form"><div class="add-row disabled"><div class="input"><span class="ph">Add a todo…</span></div><button class="btn btn-primary" type="button" disabled>Add</button></div></form>
+          <div class="state" role="alert"><p class="t">Couldn't load your todos.</p><p class="b">Check your connection and try again.</p>
+            <button class="btn btn-secondary" type="button">Try again</button></div>
+        </main>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 6. Error toast, light desktop ============ -->
+<section class="panel">
+  <p class="panel-label">6. Error toast (Sonner error variant), light desktop <span>· bottom-right at ≥ 640px; role="status"; plain failure toast (no Retry; Retry appears only when text would otherwise be lost); auto-dismiss 8 s; checkbox already rolled back</span></p>
+  <div class="frame desktop light">
+    <div class="chrome"><i></i><i></i><i></i></div>
+    <div class="app hoverable" style="min-height:400px">
+      <div class="col">
+        <header><h1 class="app-title">Todos</h1></header>
+        <main>
+          <form class="add-form"><div class="add-row"><div class="input"><span class="ph">Add a todo…</span></div><button class="btn btn-primary" type="button">Add</button></div></form>
+          <ul class="list" aria-label="Todos">
+            <li class="row"><span class="cb-hit"><span class="cb"></span></span>
+              <div class="body"><p class="desc">Send Q3 access review reminder</p><time class="meta">just now</time></div>
+              <div class="actions"><span class="icon-btn"></span><span class="icon-btn"></span></div></li>
+            <li class="row"><span class="cb-hit"><span class="cb"></span></span>
+              <div class="body"><p class="desc">Book room for retro</p><time class="meta">yesterday</time></div>
+              <div class="actions"><span class="icon-btn"></span><span class="icon-btn"></span></div></li>
+          </ul>
+        </main>
+      </div>
+      <div class="toast-wrap"><div class="toast" role="status">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+        <span>Couldn't update that todo. Please try again.</span></div></div>
+    </div>
+  </div>
+</section>
+
+</div>
+</body>
+</html>

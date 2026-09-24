@@ -1,6 +1,6 @@
 ---
 name: Todos
-status: draft
+status: final
 sources:
   - _bmad-output/planning-artifacts/prds/prd-Todo-App-2026-09-24/prd.md
   - _bmad-output/planning-artifacts/prds/prd-Todo-App-2026-09-24/addendum.md
@@ -12,45 +12,55 @@ updated: 2026-09-24
 
 ## Foundation
 
-Todos is a single-surface, responsive web app for desktop and mobile browsers, from 320px to 1920px wide. It is built with shadcn/ui and Tailwind CSS. This spine specifies only the behavior that differs from shadcn's defaults. `DESIGN.md` is the visual reference. Domain terms (Todo, Description, Completion Status, Active Todo, Completed Todo, Created At, Todo List, Optimistic Update, List States) are used exactly as the PRD Glossary defines them. There is one personal Todo List per Deployment, with no sign-in. Color mode follows the operating system's light or dark setting, and there is no in-app toggle.
+Todos is a responsive web app with a single screen, for desktop and mobile browsers from 320px to 1920px wide. It is built with shadcn/ui and Tailwind CSS, and this spine specifies only the behavior that differs from shadcn's defaults. `DESIGN.md` is the visual reference; component names here match its Components section exactly. Domain terms (Todo, Description, Completion Status, Active Todo, Completed Todo, Created At, Todo List, Optimistic Update, List States) are used exactly as the PRD Glossary defines them.
+
+There is one personal Todo List per Deployment, with no sign-in. The color mode follows the operating system's light or dark setting; there is no in-app toggle. The browser tab title is "Todos", and the favicon is the one specified in `DESIGN.md` (NFR-12).
+
+→ Composition reference: [`mockups/todo-list.html`](mockups/todo-list.html). **The spines win on any conflict with the mock.**
 
 ## Information Architecture
 
 | Surface | Reached from | Purpose |
 |---|---|---|
-| Todo List view | Opening the app URL | The only screen. The header, the add row, and the Todo List in one of its List States. |
-| Toast region | Appears over the Todo List view | Non-blocking messages when a save fails (FR-10). |
+| Todo List view | Opening the app URL | The only screen: the App header, the Add row, and the Todo List in one of its List States. |
+| Toast region | Appears over the Todo List view | Non-blocking messages when a change fails to save (FR-10). |
 
-There are no routes, no navigation, no dialogs, and no settings. Every capability in the PRD (FR-1 to FR-12) is delivered on the Todo List view:
+There are no routes, navigation, dialogs, or settings. Every PRD capability lands on the Todo List view:
 
-| Need | Where it's delivered | Journey |
+| Need | Delivered by | Journey |
 |---|---|---|
-| See the list on open (FR-1, FR-3) | Todo List view, List States | UJ-1, UJ-3 |
-| Add (FR-4, FR-5) | Add row | UJ-1, UJ-2, UJ-3 |
-| Edit (FR-6) | Inline edit field in the Todo row | UJ-1 |
-| Complete or un-complete (FR-2, FR-7) | Checkbox in the Todo row | UJ-1, UJ-2 |
-| Delete (FR-8) | Delete button in the Todo row | UJ-1 |
-| Failure feedback (FR-10) | Toast region, with the row rolled back | UJ-1 (edge case) |
+| See the list when the app opens (FR-1, FR-3) | Todo List view, List States | UJ-1, UJ-3 |
+| Add a Todo (FR-4, FR-5) | Add row | UJ-1, UJ-2, UJ-3 |
+| Edit a Todo (FR-6) | Inline edit field | UJ-1 |
+| Complete or un-complete a Todo (FR-2, FR-7) | Completion checkbox | UJ-1, UJ-2 |
+| Delete a Todo (FR-8) | Delete button (Row actions) | UJ-1 |
+| Get feedback when a change fails (FR-10) | Toast, plus the row rolling back | UJ-1 (edge case) |
 
 ## Voice and Tone
 
-The voice is plain and friendly: short, human, and direct, with no jokes, exclamation marks, or emoji. Button labels are verbs. Error messages say what happened and what to do next, and never show codes. UI text uses lowercase "todo"; the capitalized Glossary term appears only in specs.
+The voice is plain and friendly: short, human, and direct. No jokes, no exclamation marks, no emoji. Buttons are labeled with verbs. Error messages say what happened and what to do next, and never show error codes. UI text uses lowercase "todo"; the capitalized Glossary term appears only in specs.
+
+The app maps every error the Todo API returns to the copy below. It never displays raw API text.
 
 | Moment | Copy |
 |---|---|
-| Add input placeholder | "Add a todo…" |
+| Add row placeholder | "Add a todo…" |
 | Add button | "Add" |
 | Empty state | **"Nothing here yet."** / "Add your first todo above." |
-| Load error | **"Couldn't load your todos."** / "Check your connection and try again." Button: "Try again" |
-| Add failed | "Couldn't add that todo. Your text is still in the box." |
+| Load error state | **"Couldn't load your todos."** / "Check your connection and try again." Button: "Try again" |
+| Add failed, text restored to the input | "Couldn't add that todo. Your text is back in the box." |
+| Add failed, input already has new text | "Couldn't add “{first 40 characters of the Description}…”." Action: "Retry" |
 | Toggle failed | "Couldn't update that todo. Please try again." |
-| Edit failed | "Couldn't save your edit. Please try again." |
+| Edit failed, edit mode reopened | "Couldn't save your edit. Please try again." |
+| Edit failed, another Todo is being edited | "Couldn't save your edit to “{first 40 characters}…”." Action: "Retry" |
 | Delete failed | "Couldn't delete that todo. Please try again." |
-| Description too long (from the Todo API) | "That todo is too long. Keep it under 500 characters." |
+| Description too long (Todo API validation error) | "That todo is too long. The limit is 500 characters." |
+| Any other Todo API error | The failure copy for that action (above) |
 | Character counter | "{n} / 500" |
-| Edit button label (for screen readers) | "Edit todo: {Description}" |
-| Delete button label (for screen readers) | "Delete todo: {Description}" |
-| Checkbox label (for screen readers) | "Mark as done: {Description}" / "Mark as not done: {Description}" |
+| Completion checkbox accessible name | "{Description}". Its checked state conveys done / not done. |
+| Edit button accessible name | "Edit todo: {Description}" |
+| Delete button accessible name | "Delete todo: {Description}" |
+| Created At time while its row has focus | "Created {full date and time}", e.g. "Created Sep 24, 2026, 9:14 AM" |
 
 | Do | Don't |
 |---|---|
@@ -60,18 +70,21 @@ The voice is plain and friendly: short, human, and direct, with no jokes, exclam
 
 ## Component Patterns
 
-These are behavioral rules. The visual specs are in `DESIGN.md` → Components.
+This section covers behavior only. Visual specs are in `DESIGN.md` → Components. "Instant" means the change is visible within **100 ms** of the user's action (FR-4, FR-7, FR-8, NFR-1).
 
 | Component | Behavioral rules |
 |---|---|
-| Add row | Focused automatically on page load (desktop only, so the on-screen keyboard doesn't pop up on phones) `[ASSUMPTION]`. **Enter** or **Add** submits the Description. Surrounding whitespace is trimmed. An empty or whitespace-only Description does nothing: no error, and focus stays (FR-5). On submit, the new Todo appears at the top of the list at once, the input clears, and focus stays in the input (FR-4). Input stops at 500 characters (`maxlength`). The character counter appears at 450 characters. |
-| Todo row | Shows the checkbox, the Description, the Created At time, and Edit and Delete. The whole row is **not** clickable, to avoid toggling or editing by accident. Only the checkbox, the Description (double-click to edit), and the buttons respond. |
-| Completion checkbox | One click, tap, or **Space** toggles the Completion Status with an Optimistic Update. The row keeps its position (FR-7). |
-| Inline edit field | Opened by the Edit button (any device), by double-clicking the Description (pointer devices), or by pressing **Enter** while the Edit button is focused. It opens pre-filled with the Description, with all text selected. **Enter** or blur saves. **Escape** cancels and restores the original. If the text is empty after trimming, or unchanged, the edit is cancelled and nothing is saved or deleted. Shift+Enter does nothing, because Descriptions are one logical line that wraps visually. Only one Todo can be in edit mode at a time; opening another commits the first. |
-| Delete button | Deletes immediately, with no confirmation (FR-8). The row collapses and focus moves (see Interaction Primitives). |
-| Created At time | Shown relative ("just now", "5m ago", "2h ago", "yesterday", then a short date such as "Sep 12"). The full date and time appears on hover or focus in a `Tooltip`, and is exposed via `<time datetime>`. Relative times refresh every minute without re-rendering the whole list. |
-| Toast | Error variant only, one message per failed action. It appears bottom-center below 640px and bottom-right above it. Auto-dismisses after 6 s, and can be dismissed by clicking or pressing Escape. It has no "Retry" action, because the user retries by doing the action again `[ASSUMPTION]`. Several failures stack, with at most 3 visible. |
-| Character counter | Hidden below 450 characters. From 450 it shows "{n} / 500", and at 500 it turns destructive. It is announced politely to screen readers only when it first appears and when it reaches 500. |
+| App header | Static. Contains an `<h1>` of "Todos". |
+| Add row | **Enter** or **Add** submits. Leading and trailing whitespace is trimmed. An empty or whitespace-only Description does nothing: no error, and focus stays in the input (FR-5). On a valid submit, the new Todo appears instantly at the top of the list, the input clears, and focus stays in it (FR-4). Typing stops at 500 characters (`maxlength`). The character counter shows from 450 characters. The input is focused on page load only on hover-capable pointer devices, so the on-screen keyboard doesn't pop up on touch devices `[ASSUMPTION]`. The row is disabled in the Loading and Load error states. |
+| Todo row | Contains the Completion checkbox, the Description, the Created At time, and the Row actions. The row itself isn't clickable; only its controls respond. Double-clicking the Description opens the Inline edit field (hover-capable pointer devices only). The Description is rendered as plain text: HTML and Markdown are shown literally, and URLs are not turned into links (NFR-10) `[ASSUMPTION: no linkification in v1]`. |
+| Completion checkbox | One click, tap, or **Space** toggles the Completion Status instantly (Optimistic Update). The row keeps its position (FR-7). |
+| Row actions (Edit button, Delete button) | **Edit button:** opens the Inline edit field. **Delete button:** deletes the Todo instantly, with no confirmation (FR-8). Focus after a delete and Row actions visibility are in Interaction Primitives. |
+| Inline edit field | Opens from the Edit button (any device) or by double-clicking the Description (hover-capable pointer devices only). It opens pre-filled with the Description, all text selected, and grows to fit its content. **Enter** or blur saves. **Escape** cancels and restores the original text. New lines can't be entered: Enter always saves, and pasted line breaks become spaces. The Add row's 500-character cap and 450/500 character counter apply (FR-6 via FR-5). If the text is empty after trimming, or unchanged, the edit is canceled and nothing is saved or deleted. Only one Todo can be edited at a time; opening another saves the first (blur). |
+| Created At time | A `<time datetime>` element. It shows relative time: "just now", "5m ago", "2h ago", "yesterday", then a short date such as "Sep 12". On pointer hover, a `Tooltip` shows the full date and time. **While any control in its row has focus** (`:focus-within`), it shows "Created {full date and time}" in place of the relative text, so keyboard users can see it without an extra tab stop. Relative times refresh every minute, without re-rendering the whole list. |
+| Toast | Error toasts only, one per failed action, at bottom-center below 640px and bottom-right from 640px up. Plain failure toasts auto-dismiss after 8 s, and the timer pauses on hover or focus. **Toasts whose text can't be recovered anywhere else** (they carry a "Retry" action) **stay until the user acts on them or dismisses them.** "Retry" resubmits the failed change. Up to 3 toasts are visible at once; older ones collapse into Sonner's stack. |
+| Favicon | Static. The browser tab title is always "Todos". |
+
+**Scale:** The list renders every Todo without virtualization or pagination. NFR-1 sets the upper bound at 1,000 Todos.
 
 ## State Patterns
 
@@ -79,92 +92,102 @@ These are behavioral rules. The visual specs are in `DESIGN.md` → Components.
 
 | State | Trigger | Treatment |
 |---|---|---|
-| Loading | Initial fetch in progress | Nothing is shown for the first 300 ms. After that, 3–5 skeleton rows appear. The add row is visible but disabled until the data arrives `[ASSUMPTION]`. |
-| Empty | The fetch succeeded with zero Todos | "Nothing here yet." / "Add your first todo above." The add row is enabled and focused (desktop). |
-| Populated | The fetch succeeded with ≥ 1 Todo | Todos ordered newest first, with Completed Todos in place. |
-| Error | The initial fetch failed or timed out (10 s) | "Couldn't load your todos." plus a "Try again" button. The add row is hidden, so work can't be entered into a list that failed to load. "Try again" goes back to Loading. |
+| Loading | The initial fetch is in progress | Nothing is shown for the first 300 ms. After that, the Loading skeleton appears and the list has `aria-busy="true"`. The Add row is visible but disabled. |
+| Empty | The fetch succeeded with no Todos | The Empty state. The Add row is enabled, and focused on hover-capable pointer devices. |
+| Populated | The fetch succeeded with at least one Todo | Todos appear newest first. Completed Todos stay in place. |
+| Load error | The initial fetch failed or took longer than 10 s | The Load error state with "Try again". The Add row stays visible but **disabled**, so the layout doesn't jump and nothing can be added to a list that failed to load. "Try again" returns to Loading. |
 
-**Row-level states:**
+**Row-level states (FR-10).** When a change fails, the UI returns to the **last state the Todo API confirmed**. It never keeps showing the unconfirmed change. Rolling back never moves keyboard focus unless the focused element has disappeared.
 
 | State | Treatment |
 |---|---|
-| Pending (Optimistic Update not yet confirmed) | Looks exactly like the confirmed state. Later actions on the same Todo are queued in order (FR-10). |
-| Failed create | The row is removed, the Description is put back in the add input with focus, and a toast appears. If the user has already typed something new, the failed text is **not** put back over it; the toast says "Couldn't add that todo." instead `[ASSUMPTION]`. |
-| Failed toggle or delete | The row goes back to its last confirmed state and position, and a toast appears. |
-| Failed edit | The row stays in or reopens edit mode with the attempted text, and a toast appears (FR-10). |
-| Todo API validation error | The API's human-readable message is shown in the toast, and the row rolls back. |
-| Long Description | Wraps in full, and unbroken strings break anywhere. There is no truncation and no "show more". |
+| Pending (an Optimistic Update the API hasn't confirmed yet) | Looks exactly like a confirmed Todo. Further actions on the same Todo are queued and applied in the order the user made them. If one fails, the queued actions after it are dropped. |
+| Failed create, input empty | The row is removed, and its Description is put back into the Add row input. Focus goes there only if focus is currently on `<body>` or the Add row. A toast says "Couldn't add that todo. Your text is back in the box." |
+| Failed create, input has new text | The row is removed, and the new text in the input is left alone. A persistent toast quotes the failed Description and offers "Retry", so the text is never lost. |
+| Failed toggle | The Completion checkbox returns to its confirmed state. A toast appears. |
+| Failed delete | The row reappears in its original position. If focus had moved on because of the delete, it goes back to the restored row's Completion checkbox. A toast appears. |
+| Failed edit, no other edit open | The row reopens the Inline edit field with the attempted text. It takes focus only if focus is on `<body>` or on that row. A toast appears. |
+| Failed edit, another Todo is being edited | The row shows its confirmed Description. A persistent toast quotes the attempted text and offers "Retry". |
+| Todo API validation error | Handled as a failure for that action. The toast shows the matching copy from Voice and Tone. |
+| Long Description | Wraps in full, with unbroken strings wrapping too. No truncation and no "show more". |
 
 ## Interaction Primitives
 
 **Keyboard.** Everything works without a mouse.
 
-- **Tab order:** add input → Add button → then, for each row, checkbox → Edit → Delete. Timestamps are focusable only through their tooltip trigger `[ASSUMPTION: the timestamp is not a separate tab stop; the absolute time is also in the accessible name of the Description]`.
-- **Enter** in the add input: submit. **Enter** or **Space** on a focused button activates it. **Space** on the checkbox toggles it.
-- **Escape**: cancels an inline edit and returns focus to that row's Edit button. It also dismisses the newest toast.
-- **Focus after delete:** moves to the next row's checkbox. If there is no next row, the previous row's checkbox. If the list is now empty, the add input.
-- **Focus after a failed delete rolls back:** the restored row's checkbox.
+- **Tab order:** Add row input → Add button → then, for each Todo row, Completion checkbox → Edit button → Delete button.
+- **Enter** in the Add row input submits. **Enter** or **Space** on a focused button activates it. **Space** on the Completion checkbox toggles it.
+- **Escape**, in priority order:
+  1. If the Inline edit field is open, cancel the edit and return focus to that row's Edit button.
+  2. Otherwise, dismiss the newest toast.
+- **Focus after a delete:** the next row's Completion checkbox. If there is no next row, the previous row's. If the list is now empty, the Add row input.
 
-**Pointer and touch.**
+**Pointer and touch.** Visibility and gestures depend on **input capability, not screen width**:
 
-- On pointer devices that support hover (`@media (hover: hover)`), the Edit and Delete buttons stay hidden (opacity 0, but still in the tab order) until the row is hovered or has focus inside it. On touch devices they are always visible (FR-8).
-- Double-clicking a Description opens inline edit on pointer devices. Touch devices use the Edit button, so an accidental tap never opens edit mode.
-- There is no swipe-to-delete, no drag-to-reorder, and no long-press menu.
+- **Hover-capable pointers** (`@media (hover: hover) and (pointer: fine)`): the Row actions are hidden (opacity 0, still in the tab order) until the row is hovered or contains focus. Double-clicking the Description opens the Inline edit field. The Add row input is focused on page load.
+- **Everything else** (touch and coarse pointers): the Row actions are always visible (FR-8). Double-click editing is off, so a stray tap never opens edit mode. The Add row input is not focused on page load.
+- Not supported: swipe-to-delete, drag-to-reorder, long-press menus.
 
-**Motion.** Rows appear and disappear with a 150 ms height and opacity transition, so the list doesn't jump (NFR-12). Checking a box has no animation beyond shadcn's default checkbox transition. With `prefers-reduced-motion: reduce`, all transitions are instant.
+**Motion.**
 
-**Not allowed:** confirmation dialogs, modal overlays of any kind, celebration animations, infinite scroll, controls that appear only on hover on touch devices, and auto-sorting Completed Todos.
+- **Adding:** the row appears at full opacity instantly. Its height then expands over 150 ms.
+- **Deleting:** the row fades to transparent within 100 ms, which is what makes the delete feel instant (FR-8). Its height then collapses over 150 ms, so the list doesn't jump (NFR-12).
+- **Checking:** the Completion checkbox uses shadcn's default transition, with no extra animation.
+- **Reduced motion:** with `prefers-reduced-motion: reduce`, all transitions are instant.
+
+**Not allowed:** confirmation dialogs, modal overlays of any kind, celebratory animations, infinite scroll, controls that appear only on hover on touch devices, and automatically moving Completed Todos to the bottom.
 
 ## Accessibility Floor
 
-Behavioral rules. Visual contrast is in `DESIGN.md` → Colors. Target: WCAG 2.1 AA (NFR-4).
+This section covers behavior only. Visual contrast is in `DESIGN.md` → Colors. The target is WCAG 2.1 AA (NFR-4).
 
-- **Landmarks:** a `<header>` with an `<h1>` of "Todos", and a `<main>` containing the add form (a `<form>` with a visually hidden label "New todo") and the list (`<ul aria-label="Todos">`).
-- **Checkbox:** a real checkbox (shadcn/Radix), with its checked state exposed and an accessible name that includes the Description.
-- **Announcements:** a polite `aria-live` region announces "Todo added", "Marked as done", "Marked as not done", "Todo deleted", and "Todo updated". Save failures are announced by the toast, which uses `role="status"`. It could use `alert`, but `status` avoids interrupting the user `[ASSUMPTION]`. The load error uses `role="alert"`.
-- **Loading:** the list has `aria-busy="true"` while loading. The skeleton rows are `aria-hidden`.
-- **Focus:** the focus ring is always visible (`{components.focus-ring}`), and focus is never lost or moved to `<body>` after any action (see Interaction Primitives).
-- **Touch targets:** at least `{spacing.touch-target}` (44×44 px) for the checkbox, Edit, Delete, and Add.
-- **Zoom:** usable at 200% browser zoom and at a 320px width with no horizontal scrolling.
+- **Landmarks and labels:** a `<header>` contains the `<h1>` "Todos". A `<main>` contains the Add row and the list. The Add row is a `<form>` whose input has the visually hidden label "New todo"; the list is a `<ul aria-label="Todos">`.
+- **Completion checkbox:** a real checkbox (shadcn/Radix). Its accessible name is the Description, and its checked state is exposed. The name doesn't change when the box is toggled.
+- **Announcements:** a polite `aria-live` region announces "Todo added", "Marked as done", "Marked as not done", "Todo deleted", and "Todo updated". Failure toasts use `role="status"` so they don't interrupt `[ASSUMPTION]`. The Load error state uses `role="alert"`. The character counter is announced politely when it first appears and when it reaches 500.
+- **Loading:** the list has `aria-busy="true"`, and the Loading skeleton is `aria-hidden`.
+- **Focus:** the focus ring (`{components.focus-ring}`) is always visible. Focus is never lost to `<body>` after any action, and a background rollback moves it only in the cases State Patterns specifies (the focused element disappeared, or a failed delete restores the row it had moved away from).
+- **Touch targets:** the Completion checkbox (`{components.completion-checkbox.hitArea}`), the Row actions, and the Add button are all at least `{spacing.touch-target}` (44×44 px).
+- **Timing:** any toast whose content can't be recovered elsewhere stays until the user dismisses it. Other toasts pause while hovered or focused.
+- **Zoom:** the app is usable at 200% browser zoom and at 320px width, with no horizontal scrolling.
 
 ## Responsive & Platform
 
 | Width | Behavior |
 |---|---|
-| < 640px | `{spacing.gutter-mobile}` gutters. Edit and Delete are always visible. Toasts appear bottom-center. The add input is not auto-focused. |
-| ≥ 640px | `{spacing.gutter-desktop}` gutters. The column is capped at `{spacing.content-max}` and centered. Toasts appear bottom-right. |
+| < 640px | `{spacing.gutter-mobile}` gutters and `{spacing.page-top-mobile}` top spacing. Toasts appear bottom-center. |
+| ≥ 640px | `{spacing.gutter-desktop}` gutters and `{spacing.page-top-desktop}` top spacing. The column is capped at `{spacing.content-max}` and centered. Toasts appear bottom-right. |
 
-Whether Edit and Delete are visible depends on the device's hover capability, not on its width. A touch laptop with a mouse gets hover behavior. The same single column is used at every width. There is no PWA, no offline mode, and no native app (PRD §6.2). Supported browsers are listed in PRD NFR-5.
+Width controls only spacing and toast position. Row actions visibility, double-click editing, and page-load focus all depend on input capability (see Interaction Primitives). A narrow desktop window behaves like desktop, and a large tablet behaves like touch. The layout is the same single column at every width. There is no PWA, no offline mode, and no native app (PRD §6.2). Supported browsers are listed in PRD NFR-5.
 
 ## Key Flows
 
-UJ-4 (Sam, a developer, extends the app) has no UI and is handled by architecture and the README, so there is no flow for it here.
+UJ-4 (Sam, a developer, extends the app) has no UI and is covered by the architecture and the README, so there is no flow for it here.
 
 ### Flow 1: Dana clears her morning in two minutes (UJ-1)
 
-1. Dana, an internal operations analyst, opens her Todos URL on her laptop. The data arrives in under 300 ms, so no skeleton appears, and the add input is focused.
-2. She types "Send Q3 access review reminder" and presses **Enter**. The Todo appears at the top at once, the input clears, and focus stays in it.
-3. She double-clicks yesterday's "Book room for retor". The text becomes editable, with everything selected. She corrects it to "retro" and presses **Enter**. The row stays where it is.
-4. She clicks the checkbox on "Reply to IT ticket". It fills with teal, and the text gets a line-through and turns muted.
-5. **Climax:** she refreshes out of habit. Everything is exactly as she left it: the new Todo at the top, the fixed typo, and the Completed Todo still in place.
-6. She hovers two old Completed Todos in turn and clicks Delete on each. They collapse smoothly, and focus moves to the next row.
+1. Dana, an internal operations analyst, opens her Todos URL on her laptop. The data arrives in under 300 ms, so no skeleton shows, and the Add row input already has focus.
+2. She types "Send Q3 access review reminder" and presses **Enter**. The Todo appears at the top instantly, the input clears, and focus stays in it.
+3. She double-clicks yesterday's "Book room for retor". The Inline edit field opens with all the text selected. She corrects it to "retro" and presses **Enter**. The row stays where it is.
+4. She clicks the Completion checkbox on "Reply to IT ticket". The box fills teal, and the Description gets a line-through and turns muted.
+5. **Climax:** out of habit, she refreshes. Everything is exactly as she left it: the new Todo at the top, the fixed typo, and the Completed Todo still in place.
+6. She hovers over two old Completed Todos in turn and clicks Delete on each. Each one fades instantly, then collapses smoothly.
 
-**Failure:** the server is unreachable when she ticks a Todo. The checkbox fills, then un-fills within 10 s, and a toast says "Couldn't update that todo. Please try again." Nothing else on screen changes, so she ticks it again once she's back online.
+**Failure:** the server is unreachable when she ticks a Todo. The box fills, then clears again once the request fails or times out (after up to 10 s). A toast says "Couldn't update that todo. Please try again." Nothing else on screen changes, and focus stays where she left it. She ticks it again once she's back online.
 
 ### Flow 2: Dana checks her list from her phone (UJ-2)
 
-1. Walking to a meeting, Dana opens Todos in her phone's browser. The list fits the screen width, and Edit and Delete are visible on every row.
-2. She taps the checkbox on a finished Todo. It is marked as done at once.
-3. She taps the add input, types "Follow up with facilities", and taps **Add**. The input doesn't zoom, and the new Todo appears at the top.
+1. Walking to a meeting, Dana opens Todos in her phone's browser. The list fits the screen width, and every row shows Edit and Delete.
+2. She taps the Completion checkbox on a finished Todo, and it is marked done instantly.
+3. She taps the Add row input, types "Follow up with facilities", and taps **Add**. The page doesn't zoom, and the new Todo appears at the top.
 4. **Climax:** back at her laptop, she reloads Todos, and the Todo she added on her phone is there.
 
-**Failure:** she taps Delete by mistake. There is no undo in v1, so she re-adds the Todo. `[NOTE FOR UX: if this happens often in practice, revisit PRD FR-8 (no confirmation, no undo)]`
+**Failure:** she taps Delete by mistake. v1 has no undo, so she adds the Todo again. `[NOTE FOR UX: if this happens often in practice, revisit PRD FR-8 (no confirmation, no undo)]`
 
 ### Flow 3: Priya opens her new Deployment for the first time (UJ-3)
 
-1. Priya, a product designer, opens her new Todos URL.
-2. For a moment nothing shows, then (if the data takes longer than 300 ms) skeleton rows appear.
-3. The Empty state appears: "Nothing here yet." / "Add your first todo above." The add input is right above it, with its cursor ready.
-4. **Climax:** she types "Draft onboarding sketches" and presses **Enter**. The Empty state is replaced by her first Todo, without any explanation needed.
+1. Priya, a product designer, opens her new Todos URL on her laptop.
+2. For a moment, nothing shows. If loading takes longer than 300 ms, the Loading skeleton appears under a disabled Add row.
+3. The Empty state appears: "Nothing here yet." / "Add your first todo above." The Add row above it is enabled, with the cursor ready.
+4. **Climax:** she types "Draft onboarding sketches" and presses **Enter**. Her first Todo replaces the Empty state, and nothing needed explaining.
 
-**Failure:** the Todo API is down when she opens the page. She sees "Couldn't load your todos." with **Try again**, rather than an empty list that would suggest she has no data. She clicks Try again once the server is back, and the list loads.
+**Failure:** the Todo API is down when she opens the page. Instead of an empty list that suggests she has no data, she sees "Couldn't load your todos." with **Try again**. Once the server is back, she clicks Try again and the list loads.
