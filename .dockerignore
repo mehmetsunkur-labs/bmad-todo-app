@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/coverage
+.git
+.env
+.env.*
+!.env.example
+_bmad
+_bmad-output
+.claude

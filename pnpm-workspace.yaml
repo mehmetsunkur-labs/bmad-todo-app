@@ -1,0 +1,14 @@
+packages:
+  - apps/*
+  - packages/*
+  - e2e
+
+allowBuilds:
+  # esbuild needs its postinstall to fetch the platform binary (Vite/tsx/drizzle-kit).
+  esbuild: true
+  # Carried over from the shadcn Vite template: blocks msw's postinstall if it is ever installed (not installed today; only an optional vitest peer).
+  msw: false
+
+minimumReleaseAgeExclude:
+  # Added by pnpm: vite 8.3.1 (pinned Stack version) was published within pnpm's default minimumReleaseAge window.
+  - vite@8.3.1
