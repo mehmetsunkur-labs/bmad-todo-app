@@ -194,7 +194,7 @@ The user can delete any Todo, whether it is Active or Completed.
 All Todo changes are saved by the Todo API to a persistent store.
 
 **Consequences (testable):**
-- Todos survive a browser refresh, closing and reopening the browser, opening the app from a different device, and a restart of the Todo API server.
+- Todos survive a browser refresh, closing and reopening the browser, opening the app from a different device, and a restart of the Todo API server or of the whole containerized stack (as long as its data volume is not deliberately removed).
 - The browser does not act as the store. Clearing browser storage does not affect the Todo List.
 
 #### FR-10: Roll back and notify on failed changes
@@ -240,7 +240,7 @@ The Todo List view works from 320 px to at least 1920 px viewport width.
 - **NFR-4 Accessibility:** WCAG 2.1 AA for the Todo List view. All actions can be done by keyboard alone, focus is visible, labels are accessible, and color contrast is at least 4.5:1 for text `[ASSUMPTION: AA target for an internal tool]`.
 - **NFR-5 Browser support:** the latest two versions of Chrome, Edge, Firefox, and Safari (desktop), plus Safari on iOS and Chrome on Android.
 - **NFR-6 Maintainability:** a developer new to the project can run it locally within 15 minutes by following the README. The codebase includes automated tests covering every FR's consequences at the API level, plus the core UI flows (add, edit, toggle, delete, and the failure rollback).
-- **NFR-7 Deployability:** a Deployment can be started with one documented command or pipeline, and its configuration (for example, store location and port) comes from environment settings rather than code edits.
+- **NFR-7 Containerized delivery:** the whole application (frontend, Todo API, and persistent store) is containerized and starts locally with a single documented command via a container composition, for development and debugging. Configuration (for example, ports and store location) comes from environment settings rather than code edits. Persistent data lives in a named volume, so it survives container restarts and rebuilds.
 - **NFR-8 Extensibility:** the Todo data model and Todo API must allow a Todo owner (user) and authentication to be added later without rewriting existing endpoints or migrating in a way that loses data. This is a design constraint for architecture. It is not a v1 feature.
 - **NFR-9 Observability (basic):** the Todo API logs every request with a timestamp, operation, outcome, and latency, and logs unhandled errors with enough context to diagnose them. There must be no logging of full request bodies beyond the Description length.
 - **NFR-10 Input safety:** Descriptions are stored and rendered as plain text. Any HTML or script content is displayed literally and never executed.
@@ -259,7 +259,8 @@ The Todo List view works from 320 px to at least 1920 px viewport width.
 ### 6.2 Out of Scope for MVP
 
 - **User accounts, authentication, and per-user lists:** deferred to a later version. The architecture must keep this possible (NFR-8).
-- **Access control on the Deployment:** anyone who can reach the Deployment's URL can read and change the Todo List. `[NOTE FOR PM]` This matters for an internal tool; see Open Question 1.
+- **Access control on the Deployment:** anyone who can reach the Deployment's URL can read and change the Todo List. This is an accepted v1 risk; network placement is the deployer's responsibility.
+- **Production hardening:** production hosting, TLS, scaling or high availability, monitoring and alerting, backups and restore, and a CI/CD pipeline are all out of scope for v1. v1 targets containerized local development, and the deployer handles any deployment manually.
 - **Collaboration, sharing, and assignment.**
 - **Priorities, due dates, reminders, and notifications.**
 - **Tags, categories, multiple lists, search, filters (All / Active / Completed), and manual reordering.**
@@ -271,7 +272,7 @@ The Todo List view works from 320 px to at least 1920 px viewport width.
 
 **Primary**
 - **SM-1: Unguided task completion.** In a hallway test with at least 5 internal colleagues who have never seen the app, each completes add, edit, complete, un-complete, and delete without help or explanation. Target: 5 out of 5. Validates FR-1, FR-2, FR-4, FR-6, FR-7, FR-8.
-- **SM-2: Zero data loss.** Across the scripted refresh, reopen, second-device, and server-restart checks, plus the first 4 weeks of internal use, no reports of lost or reverted Todos after an acknowledged save. Target: 0. Validates FR-9, NFR-3.
+- **SM-2: Zero data loss.** Across the scripted refresh, reopen, second-device, server-restart, and container-restart checks, no occurrences of lost or reverted Todos after an acknowledged save. Target: 0. Validates FR-9, NFR-3.
 
 **Secondary**
 - **SM-3: Perceived speed.** Measured in automated UI tests, the UI reflects each action within 100 ms in 95% of cases. Validates NFR-1.
@@ -284,9 +285,11 @@ The Todo List view works from 320 px to at least 1920 px viewport width.
 
 ## 8. Open Questions
 
-1. **Deployment access:** with no authentication, should the Deployment be reachable only from the internal network or VPN, or placed behind an existing company SSO proxy? This affects hosting in architecture, not the app's features.
-2. **Who owns the Deployment?** Is it one shared Deployment for a team, or one per person? The PRD supports either, but the answer affects how SM-2 is monitored.
-3. **Data retention and backups:** is a periodic backup of the persistent store expected for an internal tool, and who restores it if needed?
+None open. Resolved on 2026-09-24:
+
+1. **Deployment access:** there is no authentication and no access restriction in v1. Anyone who can reach the URL can read and change the Todo List. This is an accepted risk.
+2. **Deployment ownership:** there is no deployment team. The product owner deploys it personally. v1 ships as containers, with a container composition for local development and debugging (NFR-7).
+3. **Backups:** none are expected. Production concerns are out of scope for v1 (§6.2).
 
 ## 9. Assumptions Index
 
