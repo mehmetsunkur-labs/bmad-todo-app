@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-24-2026 16:33
-last_updated: 09-25-2026 12:14
+last_updated: 09-25-2026 13:11
 project: Todo-App
 project_key: NOKEY
 tracking_system: file-system
@@ -61,14 +61,14 @@ action_items:
     action: "Reuse the failed create id when restored text is resubmitted unchanged;
       add a timeout-then-resubmit same-id test (F1)"
     owner: "Dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-25.md"
   - id: "epic-1-retro-item-2-add-a-contract-test-parsing-real-api-201"
     epic: 1
     action: "Add a contract test parsing real API 201/200/409/400 bodies with shared
       TodoSchema/ErrorEnvelopeSchema and the client error mapping (F2)"
     owner: "Dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-25.md"
   - id: "epic-1-retro-item-3-story-2-1-2-2-specs-failure-path-can-set"
     epic: 1
@@ -83,14 +83,14 @@ action_items:
     action: "Lint-enforce fetch only in http.ts and Drizzle only in repositories/db;
       fix stale repositories/index.ts comment (F5)"
     owner: "Dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-25.md"
   - id: "epic-1-retro-item-5-extract-shared-web-api-test-helpers-and"
     epic: 1
     action: "Extract shared web/API test helpers and Toaster tests out of add-row.test.tsx
       before Epic 2 (F6)"
     owner: "Dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-25.md"
   - id: "epic-1-retro-item-6-every-ui-story-runs-a-playwright-check-a"
     epic: 1
