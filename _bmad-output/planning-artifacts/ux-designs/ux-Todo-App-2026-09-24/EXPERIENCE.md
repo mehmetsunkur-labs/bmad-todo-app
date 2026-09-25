@@ -49,10 +49,10 @@ The app maps every error the Todo API returns to the copy below. It never displa
 | Empty state | **"Nothing here yet."** / "Add your first todo above." |
 | Load error state | **"Couldn't load your todos."** / "Check your connection and try again." Button: "Try again" |
 | Add failed, text restored to the input | "Couldn't add that todo. Your text is back in the box." |
-| Add failed, input already has new text | "Couldn't add “{first 40 characters of the Description}…”." Action: "Retry" |
+| Add failed, input already has new text | "Couldn't add “{quote}”." Action: "Retry". {quote} is the Description as-is at 40 characters or fewer, otherwise its first 40 characters and "…". |
 | Toggle failed | "Couldn't update that todo. Please try again." |
 | Edit failed, edit mode reopened | "Couldn't save your edit. Please try again." |
-| Edit failed, another Todo is being edited | "Couldn't save your edit to “{first 40 characters}…”." Action: "Retry" |
+| Edit failed, another Todo is being edited | "Couldn't save your edit to “{quote}”." Action: "Retry". {quote} is the Description as-is at 40 characters or fewer, otherwise its first 40 characters and "…". |
 | Delete failed | "Couldn't delete that todo. Please try again." |
 | Description too long (Todo API validation error) | "That todo is too long. The limit is 500 characters." |
 | Any other Todo API error | The failure copy for that action (above) |

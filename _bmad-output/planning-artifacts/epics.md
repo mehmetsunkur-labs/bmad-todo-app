@@ -74,7 +74,7 @@ NFR12: The product feels finished:
 From `ARCHITECTURE-SPINE.md`. The AD IDs are binding.
 
 **Starter and workspace (Epic 1, Story 1):**
-- Starter: scaffold `apps/web` with `pnpm dlx shadcn@4.21.0 init -t vite -b radix` (Radix variant, then `shadcn add sonner`). It brings ESLint with typescript-eslint and Prettier.
+- Starter: scaffold `apps/web` with `pnpm dlx shadcn@4.21.0 init -t vite -b radix -p nova` (Radix variant; `-p nova` answers the preset prompt so the command runs unattended; then `shadcn add sonner`). It brings ESLint with typescript-eslint and Prettier.
 - Create a pnpm workspace monorepo with `apps/web`, `apps/api`, `packages/shared` (consumed as TypeScript source, `workspace:*`), and `e2e/`.
 - The root scripts are `dev`, `build`, `test`, `test:e2e`, `lint`, `format`, `typecheck`, `db:generate`, `db:migrate`, and `api:docs`.
 
@@ -149,8 +149,8 @@ From `ARCHITECTURE-SPINE.md`. The AD IDs are binding.
 - `compose.override.yaml` (loaded by plain `docker compose up`) switches to development mode:
   - Vite with HMR
   - `tsx watch`
-  - `--inspect=0.0.0.0:9229`
-  - `db` published on port 5432
+  - `--inspect=0.0.0.0:9229` inside the container, published on the host only as `127.0.0.1:9229`
+  - `db` published only on `127.0.0.1:${DB_PORT:-5432}`; host ports are overridable via `.env` (`WEB_PORT`, `DB_PORT`)
   - an init script that creates `todos_test`
 - `.env.example` is committed and `.env` is not.
 - A test checks that data survives `docker compose down` followed by `up`.
@@ -256,7 +256,7 @@ UX-DR15: Keyboard and focus.
   - Focus is never lost to `<body>`, and background rollbacks don't move it except in the UX-DR14 cases.
   - The focus ring is 2px in the ring color, with a 2px offset.
 UX-DR16: Screen reader support.
-  - Landmarks: `<header>`, and a `<main>` containing a `<form>` and `<ul aria-label="Todos">`.
+  - Landmarks: `<header>`, and a `<main>` containing a `<form>` and, in the Loading and Populated states, `<ul aria-label="Todos">`. Empty and Load error show their message in `<main>` with no empty list element.
   - A polite live region announces "Todo added", "Marked as done", "Marked as not done", "Todo deleted", and "Todo updated".
   - The page stays usable at 200% zoom and 320px width.
 UX-DR17: Motion.
@@ -316,14 +316,14 @@ _Implements: NFR7 (dev stack), NFR9, NFR11, NFR12 (title, favicon), FR11 (health
 **When** I run `docker compose up`
 **Then** these three services start:
 - `web`: the Vite dev server with HMR.
-- `api`: runs under `tsx watch`, with the inspector on `0.0.0.0:9229`.
-- `db`: `postgres:18-alpine`, with the named volume `todos-data` mounted at `/var/lib/postgresql` and port 5432 published.
+- `api`: runs under `tsx watch`, with the inspector listening on `0.0.0.0:9229` in the container and published as `127.0.0.1:9229`.
+- `db`: `postgres:18-alpine`, with the named volume `todos-data` mounted at `/var/lib/postgresql`, published as `127.0.0.1:${DB_PORT:-5432}`.
 
 **And** the Compose project is named `todos`, `api` waits for `db` to pass `pg_isready -h 127.0.0.1`, and the dev init script creates the `todos_test` database.
 
 **Given** the workspace
 **When** I look at the repository
-**Then** it is a pnpm workspace with `apps/web` (scaffolded with `pnpm dlx shadcn@4.21.0 init -t vite -b radix`), `apps/api`, `packages/shared` (depends only on `zod` and is consumed as `workspace:*`), and `e2e/`.
+**Then** it is a pnpm workspace with `apps/web` (scaffolded with `pnpm dlx shadcn@4.21.0 init -t vite -b radix -p nova`), `apps/api`, `packages/shared` (depends only on `zod` and is consumed as `workspace:*`), and `e2e/`.
 **And** the root scripts `dev`, `build`, `test`, `lint`, `format`, `typecheck`, `db:generate`, and `db:migrate` all run successfully, with the stack versions matching the Stack table in the architecture spine.
 
 **Given** the API is running
@@ -399,7 +399,7 @@ _Implements: FR1, FR3, FR9, FR11 (list), FR12, NFR8 (ctx), NFR10, UX-DR5, UX-DR1
 
 **And** `http.ts` is the only code that calls `fetch`. It uses relative paths and `AbortSignal.timeout(10s)`, and validates every response against its schema.
 **And** the QueryClient uses the pinned AD-6 defaults.
-**And** the list is a `<ul aria-label="Todos">` inside `<main>`.
+**And** in the Loading and Populated states the list is a `<ul aria-label="Todos">` inside `<main>`; the Empty and Load error states render their message instead of a list.
 
 ### Story 1.3: Create Todos through the API, safely and idempotently
 
@@ -490,7 +490,7 @@ _Implements: FR4, FR5, FR10 (create), UX-DR3, UX-DR4, UX-DR12, UX-DR13, UX-DR14 
 **Given** the create fails
 **When** I have already typed something new
 **Then** my new text is left untouched.
-**And** a persistent toast says "Couldn't add “{first 40 characters}…”." with a **Retry** action, which resends the original `id` and Description.
+**And** a persistent toast says "Couldn't add “{quote}”." with a **Retry** action, which resends the original `id` and Description, where {quote} is the Description as-is when it has 40 characters or fewer, otherwise its first 40 characters followed by "…".
 
 **Given** the API returns `VALIDATION_ERROR` with `reason: "too_long"`
 **When** the create fails
@@ -551,6 +551,14 @@ _Implements: FR6, FR7, FR8 (API), FR11 (PATCH, DELETE), NFR3, AD-2, AD-3, AD-4_
 **When** both succeed
 **Then** the later write wins, and the row is never corrupted (NFR3).
 
+**Given** a Todo created with id X and then edited to a new Description
+**When** a late `POST /api/v1/todos` for id X with the original Description arrives
+**Then** the response is `409 CONFLICT` and nothing is written (the client shows the add failure).
+
+**Given** a Todo with id X that was deleted
+**When** a late `POST /api/v1/todos` for id X arrives
+**Then** it is created again (`201`): a create Retry means "make this Todo exist" (AD-4, sprint-change-proposal-2026-09-25).
+
 **Given** the API test suite
 **When** it runs
 **Then** every case above is tested, and each write is a single statement.
@@ -594,6 +602,20 @@ _Implements: FR2, FR7, FR10 (toggle, queued), UX-DR6, UX-DR7, UX-DR14, AD-12_
 **When** I toggle it and the create then fails
 **Then** the queued toggle is dropped, only the create failure is reported, and the row is removed. This case has a `todo-sync` race test.
 
+**Given** a write kind whose failure maps to a known server state (a PATCH `404` means the Todo no longer exists)
+**When** that failure arrives
+**Then** the `todo-sync` helper itself sets `confirmed(id)` from the kind's mapping (`null` for 404), clears `pending(id)`, re-renders that id, and raises the kind's one failure toast. Feature code never writes sync state.
+
+**Given** a list fetch succeeds while some Todos have pending ops
+**When** `confirmed` is seeded
+**Then** the rendered list is each listed Todo with its pending ops re-applied, plus pending creates not yet listed.
+**And** an id with pending ops is never set to `null` by seeding.
+**And** both cases have `todo-sync` tests.
+
+**Given** `createTodoMutation(kind)`
+**When** it is called
+**Then** `kind` is the typed union `'create' | 'edit' | 'toggle' | 'delete'`, not a free string.
+
 ### Story 2.3: Delete a Todo
 
 As Dana,
@@ -620,6 +642,11 @@ _Implements: FR8, FR10 (delete), UX-DR8, UX-DR15 (focus after delete), UX-DR17 (
 **Given** the server returns `404` for the DELETE
 **When** the response arrives
 **Then** it is treated as success.
+
+**Given** the DELETE response is `204`
+**When** `http.ts` handles it
+**Then** it resolves to `null` (typed), and a `204` on a call that expects a body is classified `INTERNAL`.
+**And** delete success writes `confirmed(id) = null` from that value.
 
 **Given** a delete fails
 **When** the failure arrives
@@ -679,7 +706,7 @@ _Implements: FR6, FR10 (edit), UX-DR8, UX-DR9, UX-DR14, UX-DR15, AD-12_
 **Given** an edit fails while another Todo is being edited
 **When** the failure arrives
 **Then** the row shows the Description the server last confirmed.
-**And** a persistent toast says "Couldn't save your edit to “{first 40 characters}…”." with **Retry**, which resends the original PATCH.
+**And** a persistent toast says "Couldn't save your edit to “{quote}”." with **Retry**, which resends the original PATCH, using the same {quote} rule as Story 1.4.
 
 **Given** the server returns `404`, or `VALIDATION_ERROR` with reason `too_long`
 **When** the failure arrives

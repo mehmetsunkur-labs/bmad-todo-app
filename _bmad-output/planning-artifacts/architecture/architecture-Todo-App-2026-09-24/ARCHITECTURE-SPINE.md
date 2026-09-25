@@ -90,6 +90,7 @@ Arrows are the only allowed import directions. `apps/web` and `apps/api` never i
 - **Rule:**
   - **Ids:** the web client generates each Todo `id` as a UUIDv7 using the `uuid` package, never `crypto.randomUUID`, which is unavailable over plain-HTTP network access. A "Retry" of a failed create resends the **original** `id` and Description. A "Retry" of a failed edit resends the original PATCH.
   - **POST:** the service runs `INSERT … ON CONFLICT (id) DO NOTHING`. If a row with that `id` already exists, the response is `200` with the stored Todo when the normalized Description matches, and `409 CONFLICT` otherwise.
+  - **Late create retries:** the comparison is against the *stored* Description. A create Retry for a Todo since edited elsewhere gets `409`, and the client shows the add failure. A create Retry for a Todo since deleted re-creates it, because Retry means "make this Todo exist". Both are accepted multi-tab edge cases (decision 2026-09-25, sprint-change-proposal-2026-09-25).
   - **DELETE:** an unknown `id` returns `404`. The client treats `404` on DELETE as success.
   - **PATCH:** an unknown `id` returns `404`. The client treats this as the Todo having been deleted elsewhere: its confirmed state becomes `null`, the Todo is removed, and the failure toast for that action is shown. A pending edit's typed text goes into that toast's quoted text, following EXPERIENCE.md's "Edit failed, another Todo is being edited" copy.
 
@@ -134,9 +135,9 @@ Arrows are the only allowed import directions. `apps/web` and `apps/api` never i
     - `retry: false`
     - `networkMode: 'always'`
     - `refetchOnWindowFocus: false`, `refetchOnReconnect: false`, `refetchOnMount: false`
-  - **Fetching the list:** the list is fetched only when the page loads and by "Try again", which calls `resetQueries({ queryKey: ['todos'] })`. A successful list fetch seeds the confirmed store in `todo-sync.ts`.
+  - **Fetching the list:** the list is fetched only when the page loads and by "Try again", which calls `resetQueries({ queryKey: ['todos'] })`. A successful list fetch seeds the confirmed store in `todo-sync.ts`, and the rendered list is the seeded state with pending ops re-applied. Seeding never sets an id with pending ops to `null`.
   - **Writes:** mutations never call `invalidateQueries(['todos'])`.
-  - **The HTTP client:** `http.ts` is the only code that calls `fetch`. It always requests the relative path `/api/v1/...` and uses `AbortSignal.timeout(REQUEST_TIMEOUT_MS)`. It sets `Content-Type: application/json` only when there is a body, never parses a `204`, validates responses against the shared schemas, and classifies failures as AD-5 describes.
+  - **The HTTP client:** `http.ts` is the only code that calls `fetch`. It always requests the relative path `/api/v1/...` and uses `AbortSignal.timeout(REQUEST_TIMEOUT_MS)`. It sets `Content-Type: application/json` only when there is a body, never parses a `204` and resolves it to `null` (a `204` where a body is expected is `INTERNAL`), validates responses against the shared schemas, and classifies failures as AD-5 describes.
 
 ### AD-7 — API layering and persistence ownership
 
@@ -177,8 +178,9 @@ Arrows are the only allowed import directions. `apps/web` and `apps/api` never i
     - `db` has the healthcheck `pg_isready -h 127.0.0.1 -U $POSTGRES_USER`. `api` has `depends_on: db: service_healthy`, and its own healthcheck calls `/api/v1/health`.
   - **`compose.override.yaml`, loaded automatically by `docker compose up`:** turns the stack into the dev and debug setup the addendum asks for.
     - `web` runs the Vite dev server with HMR and source mounts.
-    - `api` runs under `tsx watch`, with `--inspect=0.0.0.0:9229` published.
-    - `db` publishes `5432`, and an init script in `/docker-entrypoint-initdb.d` creates the `todos_test` database.
+    - `api` runs under `tsx watch` with `--inspect=0.0.0.0:9229`, published on the host only as `127.0.0.1:9229`.
+    - Host ports are overridable in `.env` (`WEB_PORT`, `DB_PORT`); dev never publishes on all interfaces.
+    - `db` publishes `127.0.0.1:${DB_PORT:-5432}`, and an init script in `/docker-entrypoint-initdb.d` creates the `todos_test` database.
   - **Running the production-like stack:** use `docker compose -f compose.yaml up -d`.
   - **Tests:** a test checks that Todos survive `docker compose down` followed by `up`.
 
@@ -197,7 +199,7 @@ Arrows are the only allowed import directions. `apps/web` and `apps/api` never i
 - **Binds:** FR-4, FR-6, FR-7, FR-8, FR-10, NFR-1
 - **Prevents:** each write story inventing its own snapshot, rollback, or cancellation logic. Also prevents stale success responses overwriting newer optimistic state, whole-list rollbacks wiping out other Todos, and duplicate toasts.
 - **Rule:** `apps/web/src/api/todo-sync.ts` owns three maps, all keyed by Todo `id`:
-  - `confirmed: Map<id, Todo | null>`: the last state the server returned. `null` means the Todo doesn't exist on the server. It is written **only** when a list fetch succeeds and in mutation success handlers.
+  - `confirmed: Map<id, Todo | null>`: the last state the server returned. `null` means the Todo doesn't exist on the server. It is written **only** by `todo-sync.ts`: when a list fetch succeeds, in mutation success handlers, and in the failure path when the write kind maps an error to a known server state (a PATCH `404` → `null`).
   - `pending: Map<id, Op[]>`: the optimistic operations not yet confirmed, in the order the user made them.
   - `generation: Map<id, number>`: a counter per Todo, incremented on each real failure.
 
@@ -211,7 +213,7 @@ Arrows are the only allowed import directions. `apps/web` and `apps/api` never i
   | `mutationFn`, when the generation has changed | It throws `DroppedError` **without making a network call**. |
   | `onSuccess` | It sets `confirmed(id)` to the returned `Todo` (or `null` after a delete), removes the op from `pending`, and re-renders. |
   | `onError` with `DroppedError` | It removes the op and does nothing else: no toast and no re-render beyond that. |
-  | `onError` with any other error | It increments `generation(id)`, clears `pending(id)`, re-renders from `confirmed(id)`, and raises **exactly one** failure toast for that action. The toast carries the "Retry" payload when EXPERIENCE.md requires one. |
+  | `onError` with any other error | It increments `generation(id)`, clears `pending(id)`, applies the kind's failure mapping to `confirmed(id)` if it has one, re-renders from `confirmed(id)`, and raises **exactly one** failure toast for that action. The toast carries the "Retry" payload when EXPERIENCE.md requires one. |
 
 ## Consistency Conventions
 
@@ -228,7 +230,7 @@ Arrows are the only allowed import directions. `apps/web` and `apps/api` never i
 | Testing | **API:** Vitest with `fastify.inject` against a real PostgreSQL database (`todos_test`), including one test per row of AD-5. **Web:** Vitest with Testing Library, including `todo-sync` race cases such as a double toggle, create-then-toggle-fail, and delete during an edit. **End-to-end:** Playwright against the compose stack, covering add, edit, toggle, delete, rollback, and persistence across `down` and `up` (NFR-6). |
 | Lint and format | ESLint with typescript-eslint and Prettier, as the shadcn Vite template scaffolds them. The config lives at the repository root. |
 | Scripts | The root `package.json` provides `dev`, `build`, `test`, `test:e2e`, `lint`, `format`, `typecheck`, `db:generate`, `db:migrate`, and `api:docs`, all using pnpm workspaces. |
-| Starter | Scaffold `apps/web` with `pnpm dlx shadcn@4.21.0 init -t vite -b radix`, which gives the Radix variant with Sonner. Add Sonner with `shadcn add sonner`. |
+| Starter | Scaffold `apps/web` with `pnpm dlx shadcn@4.21.0 init -t vite -b radix -p nova` (the preset flag keeps it non-interactive), which gives the Radix variant with Sonner. Add Sonner with `shadcn add sonner`. |
 
 ## Stack
 

@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-24-2026 16:33
-last_updated: 09-25-2026 13:11
+last_updated: 09-25-2026 13:20
 project: Todo-App
 project_key: NOKEY
 tracking_system: file-system
@@ -76,7 +76,7 @@ action_items:
       null, refetch reapplies pending ops, define create-replay after edit/delete
       (F3, F4)"
     owner: "Architect + PM"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-25.md"
   - id: "epic-1-retro-item-4-lint-enforce-fetch-only-in-http-ts-and-d"
     epic: 1
@@ -111,5 +111,5 @@ action_items:
     action: "Reconcile specs: ul only when populated, Retry quote rule, shadcn -p
       nova, parameterized dev ports, bind dev db and inspector to 127.0.0.1 (F9)"
     owner: "PM + Architect"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-25.md"
