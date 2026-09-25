@@ -14,8 +14,8 @@ export type TodoWriteKind = "create" | "edit" | "toggle" | "delete"
 /**
  * An optimistic operation not yet confirmed by the server. `apply` derives
  * the rendered Todo from the state before it (`null` = no Todo). Story 1.4
- * defines the create op, Story 2.2 the toggle op, Story 2.3 the delete op;
- * edit follows.
+ * defines the create op, Story 2.2 the toggle op, Story 2.3 the delete op,
+ * Story 2.4 the edit op.
  */
 export interface PendingOp {
   readonly kind: TodoWriteKind
@@ -109,6 +109,18 @@ export function toggleOp(completed: boolean): PendingOp {
   return {
     kind: "toggle",
     apply: (previous) => previous && { ...previous, completed },
+  }
+}
+
+/**
+ * The optimistic edit: the previous state with the new (normalized)
+ * Description; every other field, `createdAt` included, is kept, so the Todo
+ * keeps its position. No Todo stays no Todo.
+ */
+export function editOp(description: string): PendingOp {
+  return {
+    kind: "edit",
+    apply: (previous) => previous && { ...previous, description },
   }
 }
 

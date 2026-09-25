@@ -139,7 +139,7 @@ describe("TodoRow: Delete button", () => {
     expect(icon).toHaveAttribute("aria-hidden", "true")
   })
 
-  it("sits after the Description column; tab order within a row is checkbox, then Delete", async () => {
+  it("sits after the Description column; tab order within a row is checkbox, Edit, then Delete", async () => {
     await renderPopulated()
     const row = queryRow("Middle")!
     const focusable = Array.from(
@@ -147,7 +147,11 @@ describe("TodoRow: Delete button", () => {
         "button, input, textarea, a, [tabindex]"
       )
     )
-    expect(focusable).toEqual([checkbox("Middle"), deleteButton("Middle")])
+    expect(focusable).toEqual([
+      checkbox("Middle"),
+      screen.getByRole("button", { name: "Edit todo: Middle" }),
+      deleteButton("Middle"),
+    ])
     expect(row.lastElementChild).toContainElement(deleteButton("Middle"))
     expect(deleteButton("Middle")).not.toHaveAttribute("tabindex", "-1")
   })
