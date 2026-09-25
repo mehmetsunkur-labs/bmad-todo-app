@@ -137,7 +137,7 @@ From `ARCHITECTURE-SPINE.md`. The AD IDs are binding.
 
 **Same-origin delivery (AD-9):**
 - The browser uses only relative `/api/v1` paths, and CORS is off.
-- nginx serves the SPA with `try_files $uri /index.html` and proxies `location /api/` with `proxy_pass http://api:3000;`, keeping the prefix.
+- nginx serves the SPA with `try_files $uri /index.html` and proxies `location /api/` with `resolver 127.0.0.11 valid=10s ipv6=off; set $api_upstream http://api:3000; proxy_pass $api_upstream;`, keeping the prefix and re-resolving `api` at request time.
 - The Vite dev proxy doesn't rewrite paths.
 
 **Config and Compose (AD-10):**
@@ -745,7 +745,8 @@ _Implements: FR9 (verified), NFR7 (production-like stack), NFR11, AD-9, AD-10_
 **Given** the nginx configuration
 **When** I request a path that is not a file, such as `/some/route`
 **Then** nginx serves `index.html` (`try_files $uri /index.html`).
-**And** `/api/v1/*` is proxied to `api:3000` with the path unchanged (`proxy_pass http://api:3000;`), and no CORS headers are added.
+**And** `/api/v1/*` is proxied to `api:3000` with the path unchanged (`set $api_upstream http://api:3000; proxy_pass $api_upstream;` with `resolver 127.0.0.11`, no URI part), and no CORS headers are added.
+**And** when `api` is recreated with a new container IP, `/api/v1/*` keeps working without restarting `web`.
 
 **Given** the stack is running
 **When** I open `http://<host-ip>:8080` from a phone on the same network
