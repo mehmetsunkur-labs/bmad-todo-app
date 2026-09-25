@@ -12,6 +12,15 @@ import { dismissNewestToast, setToastsPaused } from "@/lib/toast"
 import { useMediaQuery } from "@/lib/use-media-query"
 
 /**
+ * The toast action ("Retry"): Sonner's 24 px button keeps its look, with a
+ * hit extender to 44 px tall (FR-12) and the design-system focus ring
+ * (2 px `ring`, 2 px offset) in place of Sonner's faint box-shadow, which
+ * its unlayered `outline: none` would otherwise leave (hence `!`).
+ */
+export const TOAST_ACTION_CLASS =
+  "relative after:absolute after:-inset-2.5 after:content-[''] focus-visible:outline-2! focus-visible:outline-offset-2! focus-visible:outline-solid! focus-visible:outline-ring!"
+
+/**
  * The app's one Toaster (mounted in `AppProviders`): Sonner's default style
  * (not `richColors`) with the destructive CircleX error icon, bottom-center
  * below 640px and bottom-right from 640px, at most 3 visible. Escape anywhere
@@ -86,6 +95,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
         toastOptions={{
           classNames: {
             toast: "cn-toast",
+            actionButton: TOAST_ACTION_CLASS,
           },
         }}
         {...props}

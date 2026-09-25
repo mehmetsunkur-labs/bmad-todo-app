@@ -13,6 +13,8 @@ if (!baseURL || !wsEndpoint) {
 }
 
 const DURABILITY = /durability\.spec\.ts$/
+// Story 3.4's accessibility, responsive, performance and finish checks.
+const QUALITY = /quality\/.*\.spec\.ts$/
 
 export default defineConfig({
   testDir: "tests",
@@ -34,17 +36,17 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-      testIgnore: DURABILITY,
+      testIgnore: [DURABILITY, QUALITY],
     },
     {
       name: "firefox",
       use: { ...devices["Desktop Firefox"] },
-      testIgnore: DURABILITY,
+      testIgnore: [DURABILITY, QUALITY],
     },
     {
       name: "webkit",
       use: { ...devices["Desktop Safari"] },
-      testIgnore: DURABILITY,
+      testIgnore: [DURABILITY, QUALITY],
     },
     {
       name: "mobile-chromium",
@@ -54,14 +56,28 @@ export default defineConfig({
         isMobile: true,
         hasTouch: true,
       },
-      testIgnore: DURABILITY,
+      testIgnore: [DURABILITY, QUALITY],
     },
     {
-      // Restarts the stack, so it runs last, after every browser project.
+      // Desktop Chromium only: CDP network throttling is Chromium-only, and
+      // axe results don't depend on the engine. Tests set their own viewport,
+      // touch and colour scheme where a check needs one.
+      name: "quality",
+      use: { ...devices["Desktop Chrome"] },
+      testMatch: QUALITY,
+    },
+    {
+      // Restarts the stack, so it runs last, after every other project.
       name: "durability",
       use: { ...devices["Desktop Chrome"] },
       testMatch: DURABILITY,
-      dependencies: ["chromium", "firefox", "webkit", "mobile-chromium"],
+      dependencies: [
+        "chromium",
+        "firefox",
+        "webkit",
+        "mobile-chromium",
+        "quality",
+      ],
     },
   ],
 })

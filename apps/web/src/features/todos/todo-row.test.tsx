@@ -77,6 +77,8 @@ function expectCompleted(name: string) {
   expect(box).toHaveAttribute("aria-checked", "true")
   expect(box).toHaveAttribute("data-state", "checked")
   expect(description(name)).toHaveClass("line-through", "text-muted-foreground")
+  // The type role survives next to the muted colour.
+  expect(description(name)).toHaveClass("text-todo-description")
 }
 
 function expectActive(name: string) {
@@ -200,6 +202,42 @@ describe("TodoRow: Completion checkbox", () => {
     expectActive("Older")
     expect(rows()).toEqual(["Newer", "Older"])
     expect(toasts()).toEqual([])
+  })
+})
+
+describe("TodoRow: Created At placement", () => {
+  it("Created At keeps its meta type role and spans the Description and Row actions columns", async () => {
+    await renderPopulated()
+    const time = document.querySelector("time")
+    expect(time).toHaveClass(
+      "text-meta",
+      "text-muted-foreground",
+      "col-span-2",
+      "col-start-2",
+      "row-start-2"
+    )
+  })
+})
+
+describe("TodoRow: touch targets (FR-12)", () => {
+  it("the checkbox's hit extender reaches 44 px from its padding box; Edit and Delete have square 44 px hit areas", async () => {
+    await renderPopulated()
+    // 16 px box with a 1 px border: 14 px padding box + 2 × 15 px = 44 px.
+    expect(checkbox("Newer")).toHaveClass(
+      "relative",
+      "after:absolute",
+      "after:-inset-[15px]",
+      "after:content-['']"
+    )
+    for (const name of ["Edit todo: Newer", "Delete todo: Newer"]) {
+      expect(screen.getByRole("button", { name })).toHaveClass(
+        "relative",
+        "size-touch-target",
+        "after:absolute",
+        "after:-inset-px",
+        "after:content-['']"
+      )
+    }
   })
 })
 

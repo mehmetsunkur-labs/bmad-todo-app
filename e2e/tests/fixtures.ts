@@ -1,3 +1,7 @@
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
+
+import AxeBuilder from "@axe-core/playwright"
 import {
   test as base,
   expect,
@@ -181,12 +185,28 @@ export const test = base.extend<Fixtures & { exemptUrls: ExemptUrls }>({
   },
 })
 
+/** API requests sent at once by the bulk helpers. */
+const BATCH = 20
+
+/** Runs `work` over `items`, at most `BATCH` at a time, in order of batches. */
+async function inBatches<T, R>(
+  items: readonly T[],
+  work: (item: T) => Promise<R>
+): Promise<R[]> {
+  const out: R[] = []
+  for (let i = 0; i < items.length; i += BATCH) {
+    out.push(...(await Promise.all(items.slice(i, i + BATCH).map(work))))
+  }
+  return out
+}
+
 /** Deletes every Todo through the API. */
 export async function deleteAllTodos(request: APIRequestContext) {
-  for (const todo of await listTodos(request)) {
+  // Batched: a quality test can leave 1,000 Todos behind.
+  await inBatches(await listTodos(request), async (todo) => {
     const res = await request.delete(`${TODOS}/${todo.id}`)
     expect([204, 404]).toContain(res.status())
-  }
+  })
 }
 
 export async function listTodos(request: APIRequestContext): Promise<Todo[]> {
@@ -206,6 +226,119 @@ export async function seedTodo(
   })
   expect(res.status()).toBe(201)
   return (await res.json()) as Todo
+}
+
+/**
+ * Creates `n` Todos through the API ("Seeded 0001" … ), a few requests at a
+ * time. Returns them in creation-request order.
+ */
+export async function seedTodos(
+  request: APIRequestContext,
+  n: number,
+  describe: (i: number) => string = (i) =>
+    `Seeded ${String(i + 1).padStart(4, "0")}`
+): Promise<Todo[]> {
+  const inputs = Array.from({ length: n }, (_, i) => ({
+    id: uuidv7(),
+    description: describe(i),
+  }))
+  return inBatches(inputs, async (data) => {
+    const res = await request.post(TODOS, { data })
+    expect(res.status()).toBe(201)
+    return (await res.json()) as Todo
+  })
+}
+
+/** The fixed WCAG 2.1 A/AA tag set every axe scan uses (never narrowed). */
+export const AXE_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] as const
+
+/**
+ * Runs axe on the whole page with `AXE_TAGS` (no rule disabled, nothing
+ * excluded), attaches any violations to the report, and returns them.
+ */
+export async function axeViolations(page: Page, name: string) {
+  const results = await new AxeBuilder({ page })
+    .withTags([...AXE_TAGS])
+    .analyze()
+  if (results.violations.length > 0) {
+    await test.info().attach(`axe-violations-${name}`, {
+      body: JSON.stringify(results.violations, null, 2),
+      contentType: "application/json",
+    })
+  }
+  return results.violations.map((v) => ({
+    id: v.id,
+    impact: v.impact,
+    help: v.help,
+    targets: v.nodes.map((n) => n.target.join(" ")),
+  }))
+}
+
+/** One API request log line (AD-11). */
+export interface ApiLogLine {
+  time: number
+  method: string
+  route: string | null
+  statusCode: number
+  responseTime: number
+}
+
+const execFileP = promisify(execFile)
+
+/**
+ * The isolated e2e stack's API log lines (`docker compose logs api`), parsed
+ * from its JSON output. Only ever the `todos-e2e` project.
+ */
+export async function apiLogLines(): Promise<ApiLogLine[]> {
+  const project = process.env.E2E_COMPOSE_PROJECT
+  const webPort = process.env.E2E_WEB_PORT
+  if (!project || !webPort) {
+    throw new Error(
+      "E2E_COMPOSE_PROJECT and E2E_WEB_PORT must be set: run via pnpm test:e2e"
+    )
+  }
+  if (!project.startsWith("todos-e2e")) {
+    throw new Error(`refusing to read Compose project "${project}"`)
+  }
+  const { stdout } = await execFileP(
+    "docker",
+    [
+      "compose",
+      "-p",
+      project,
+      "-f",
+      "compose.yaml",
+      "logs",
+      "--no-log-prefix",
+      "api",
+    ],
+    {
+      cwd: process.env.E2E_REPO_ROOT ?? "..",
+      // Unset, Compose would fall back to `.env`'s WEB_PORT.
+      env: { ...process.env, WEB_PORT: webPort },
+      timeout: 60_000,
+      maxBuffer: 256 * 1024 * 1024,
+    }
+  )
+  const lines: ApiLogLine[] = []
+  for (const raw of stdout.split("\n")) {
+    if (!raw.startsWith("{")) continue
+    try {
+      const line = JSON.parse(raw) as Partial<ApiLogLine>
+      if (typeof line.responseTime === "number") lines.push(line as ApiLogLine)
+    } catch {
+      // Not a JSON log line.
+    }
+  }
+  return lines
+}
+
+/** Nearest-rank percentile (`p` in 0..100) of `values`. */
+export function percentile(values: readonly number[], p: number): number {
+  if (values.length === 0) throw new Error("percentile of no values")
+  const sorted = [...values].sort((a, b) => a - b)
+  const rank = Math.ceil((p / 100) * sorted.length)
+  return sorted[Math.min(sorted.length, Math.max(rank, 1)) - 1]!
 }
 
 export function addInput(page: Page): Locator {
@@ -284,6 +417,58 @@ export function nextResponse(page: Page, method: Method, path: RegExp) {
 export function quote(description: string): string {
   const chars = Array.from(description)
   return chars.length <= 40 ? description : `${chars.slice(0, 40).join("")}…`
+}
+
+/**
+ * Holds the list GET (the Loading state) until the returned `release` is
+ * called; `release` also removes the route. Always release (try/finally).
+ */
+export async function holdListLoad(page: Page): Promise<() => Promise<void>> {
+  let release!: () => void
+  const released = new Promise<void>((r) => (release = r))
+  const handler = async (
+    route: Parameters<Parameters<Page["route"]>[1]>[0]
+  ) => {
+    if (route.request().method() !== "GET") return route.fallback()
+    await released
+    await route.fallback()
+  }
+  await page.route("**/api/v1/todos", handler)
+  return async () => {
+    release()
+    await page.unroute("**/api/v1/todos", handler)
+  }
+}
+
+/**
+ * A failed add while other text is typed: one persistent toast with Retry
+ * (the Add row keeps the new text). Waits until the toast has settled.
+ */
+export async function showRetryToast(
+  page: Page,
+  failNext: Fixtures["failNext"],
+  description: string
+) {
+  let release!: () => void
+  const hold = new Promise<void>((r) => (release = r))
+  const failure = await failNext("POST", "**/api/v1/todos", { hold })
+  await addInput(page).fill(description)
+  await addInput(page).press("Enter")
+  await failure.request
+  await addInput(page).fill("Something else")
+  release()
+  await expect(toasts(page)).toHaveCount(1)
+  const retry = toasts(page).getByRole("button", { name: "Retry" })
+  await expect(retry).toBeVisible()
+  // Sonner's entrance transition: settled before anything is measured.
+  await toasts(page)
+    .first()
+    .evaluate((el) =>
+      Promise.all(
+        el.getAnimations({ subtree: true }).map((a) => a.finished)
+      ).then(() => undefined)
+    )
+  return retry
 }
 
 /** Opens the app and waits until the list has loaded. */

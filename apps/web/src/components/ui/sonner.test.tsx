@@ -55,6 +55,21 @@ afterEach(() => {
 })
 
 describe("Toaster", () => {
+  it("the Retry action keeps Sonner's look with a 44 px hit extender and the design-system focus ring", async () => {
+    renderToaster()
+    await retryToast("Couldn't add “Buy milk”.")
+    expect(screen.getByRole("button", { name: "Retry" })).toHaveClass(
+      "relative",
+      "after:absolute",
+      "after:-inset-2.5",
+      "after:content-['']",
+      "focus-visible:outline-2!",
+      "focus-visible:outline-offset-2!",
+      "focus-visible:outline-solid!",
+      "focus-visible:outline-ring!"
+    )
+  })
+
   it(`the plain toast auto-dismisses after ${PLAIN_TOAST_MS} ms`, async () => {
     renderToaster()
     await plainToast()

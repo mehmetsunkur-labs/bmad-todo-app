@@ -13,9 +13,13 @@ export type EditSaveTrigger = "enter" | "blur"
 const LINE_BREAK = /\r\n|\r|\n/g
 
 /**
- * The inline edit field: an auto-growing Textarea in `todo-description`
- * style at the Description's left edge, one row high and growing to fit its
- * content, with the Add row's 500-character cap and counter.
+ * The inline edit field: an auto-growing shadcn Textarea (its border and
+ * background kept, as in the mockup) in `todo-description` style, one row
+ * high and growing to fit its content, with the Add row's 500-character cap
+ * and counter. Its box is pulled up and left by its padding and border, so
+ * the text starts exactly where the Description's did. The row leaves room
+ * for that pull (see TodoRow), so the field never covers the checkbox's
+ * hit area and a tap on its left padding edits.
  *
  * - On mount (with `autoFocus`) it takes focus with all text selected.
  * - Every line break in the value (typed or pasted) becomes a space; Enter
@@ -120,7 +124,7 @@ export function EditField({
           if (!document.hasFocus()) return
           close(() => onSave(value, "blur"))
         }}
-        className="min-h-0 resize-none overflow-hidden rounded-none border-0 border-b bg-transparent px-0 py-0 text-(length:--text-todo-description) leading-(--text-todo-description--line-height) wrap-anywhere focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus-visible:outline-solid md:text-(length:--text-todo-description) dark:bg-transparent"
+        className="-mt-1.5 -ml-[13px] min-h-0 w-[calc(100%+13px)] resize-none overflow-hidden rounded-md px-3 py-[5px] text-(length:--text-todo-description) leading-(--text-todo-description--line-height) wrap-anywhere focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus-visible:outline-solid md:text-(length:--text-todo-description)"
       />
       <CharacterCounter length={value.length} />
     </div>

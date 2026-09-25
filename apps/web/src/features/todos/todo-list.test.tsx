@@ -55,11 +55,13 @@ describe("TodoList: List States", () => {
     expect(rows).toHaveLength(4)
     for (const row of rows) {
       expect(row).toHaveAttribute("aria-hidden", "true")
-      // Single column like the real row: a text bar and a short meta bar,
-      // no checkbox square until Epic 2.
+      // Shaped like the real row: a 16 px checkbox square, a text bar and
+      // a short meta bar.
       const bars = row.querySelectorAll('[data-slot="skeleton"]')
-      expect(bars).toHaveLength(2)
-      expect(row.querySelector(".size-4")).toBeNull()
+      expect(bars).toHaveLength(3)
+      const square = within(row).getByTestId("todo-skeleton-checkbox")
+      expect(square).toHaveClass("size-4")
+      expect(square.parentElement).toHaveClass("size-touch-target")
     }
     expect(list()).toHaveAttribute("aria-busy", "true")
     expect(screen.queryByRole("listitem")).not.toBeInTheDocument()
