@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-24-2026 16:33
-last_updated: 09-26-2026 00:03
+last_updated: 09-26-2026 00:20
 project: Todo-App
 project_key: NOKEY
 tracking_system: file-system
@@ -223,7 +223,7 @@ action_items:
       visual review vs mockup, real phone on LAN, then bmad-walkthrough and mark epic-3
       done (F10)"
     owner: "Msunkur"
-    status: open
+    status: in-progress
     ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
   - id: "epic-3-retro-item-24-make-test-stack-and-test-e2e-a-required"
     epic: 3
