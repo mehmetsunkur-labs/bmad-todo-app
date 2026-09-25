@@ -2,13 +2,21 @@
 title: 'Story 3.1: Run the production-like stack on one host and use it from my phone'
 type: 'feature'
 created: '2026-09-25'
-status: 'ready-for-dev'
+status: 'done'
+baseline_revision: 'e001a55acc988ffc05b6283fe24906d104764958'
 review_loop_iteration: 0
 followup_review_recommended: false
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-3-context.md'
 warnings: ['oversized']
-deferred: []
+deferred:
+  - summary: >-
+      Dev and prod share the `todos` Compose project, containers, host port 8080 and the `todos-data` volume, so switching modes replaces the other mode's containers, and a prod-first volume leaves dev without `todos_test`.
+    evidence: |-
+      AD-10 defines one topology with `name: todos`; `docker/db-init/01-todos-test.sql` runs only when dev initialises an empty volume. Raised by blind and edge-case review in both Story 3.1 passes. Needs an architecture decision (separate prod project/volume, or documented one-mode-at-a-time rule in the Story 3.2 README).
+    location: >-
+      compose.yaml:7
+    severity: medium
 ---
 
 <intent-contract>
@@ -176,6 +184,43 @@ deferred: []
   - `[medium]` `[defer]` (edge-case, claim) "Two modes don't conflict" holds only for images. — Same AD-10 root cause as the shared-volume finding.
   - `[low]` `[patch]` (edge-case, claim) The test accepts 504 as well as 502. — Same root cause as the fail-fast timing finding: bounding the elapsed time keeps it fail-fast. Moot (intent_gap).
 
+### 2026-09-25 — Review pass (after the AD-9 amendment)
+- verdicts: 33 findings — high 0, medium 2, low 27, false 4, maybe-false 0
+- findings:
+  - `[medium]` `[defer]` (blind) Dev and prod share the `todos` project, the `todos-data` volume and port 8080, so switching modes replaces the other mode's containers. — carried: shared-volume/mode-conflict rows of the first pass (AD-10 one-topology decision). Added to `deferred`.
+  - `[low]` `[reject]` (blind) `web` has no healthcheck and doesn't wait for a healthy `api`. — carried: the startup-only 502 window; `depends_on` is fixed by the contract, and the Never list forbids a web healthcheck.
+  - `[low]` `[reject]` (blind) nginx sets no `proxy_read_timeout`/`proxy_send_timeout`, so a hung API holds requests for 60 s. — The client aborts at 10 s regardless (`http.ts`, `NETWORK`), and the API bounds DB calls with `query_timeout` 5 s → 503. There is no user-visible difference.
+  - `[false]` `[reject]` (blind) The "path unchanged" log check can't tell proxied requests from healthcheck ones. — carried: a stripped prefix would 404, and the test requires the whole 5-request burst in its window.
+  - `[low]` `[patch]` (blind) The graceful-shutdown check scans the container's whole log history. — Fixed: the test records `stoppedAt` before `stop api` and only accepts a `database pool closed` line with `time >= stoppedAt`.
+  - `[low]` `[reject]` (blind) An inherited `WEB_PORT` isn't probed. — carried: compose fails loudly, and it's rare.
+  - `[low]` `[reject]` (blind) There's no README or phone instructions. — carried: Story 3.2 owns the README.
+  - `[false]` `[reject]` (blind) The spec file is modified but not in the diff. — The workflow leaves the spec out of the diff on purpose (it is the edge-case layer's claims file).
+  - `[low]` `[reject]` (blind) The nginx image runs as root. — The stock image's master runs as root, and its workers already drop to `nginx`. Nothing is exposed beyond port 8080. Hardening is out of this story's scope.
+  - `[low]` `[reject]` (blind) There is no gzip, no security headers, and no `Cache-Control` on root files. — carried: this belongs to Story 3.4's performance and hardening pass.
+  - `[low]` `[reject]` (blind) `Host $host` drops the port, and `proxy_http_version 1.1` does nothing without keepalive. — The API builds no absolute URLs. The directive is harmless.
+  - `[low]` `[reject]` (blind) The prod API image carries its tests and configs. — This only affects image size, and there is no runtime effect.
+  - `[false]` `[reject]` (blind) nginx listens on IPv4 only, so IPv6 phones can't connect. — Docker publishes the host port on `::` as well (`[::]:port` seen in `docker ps`) and forwards to the container's IPv4 port, so IPv6 clients reach it.
+  - `[low]` `[reject]` (intent-alignment) The mode switch is checked only as `compose config` tag names. — carried: distinct tags decide reuse deterministically.
+  - `[low]` `[reject]` (intent-alignment) The smoke run overwrites the global `todos-*:prod` tags. — carried: it builds from the same tree, so the images are equivalent.
+  - `[low]` `[reject]` (intent-alignment) API down widens 502 to 502/504 on the first request. — A 504 is possible only in the ≤10 s resolver-cache window right after `stop`. The steady stopped state is asserted as exactly 502, which is the matrix row. The client classifies both as `INTERNAL` (status-agnostic non-JSON handling in `http.ts`).
+  - `[low]` `[reject]` (intent-alignment) The phone path never leaves the host. — The test uses the host's LAN IP plus an all-interfaces publish assertion, and a headless browser check was recorded. Another physical device can't be automated here.
+  - `[false]` `[reject]` (intent-alignment) CRUD is compared with fixed codes, not a direct API call. — The API has no host port by design (AD-10). The codes asserted are the documented contract.
+  - `[low]` `[reject]` (intent-alignment) Restart, `init`, volume and `PGDATA` are checked only in config. — For compose topology, the resolved config is the authoritative surface.
+  - `[low]` `[reject]` (verification-gap) `proxy_connect_timeout 5s` isn't pinned by a hanging-connect test. — Filed disposition defer. If it regressed, a hanging connect would still end at the client's 10 s abort (`NETWORK`), and closing the gap needs an iptables SYN-drop rig. It's low, so it's rejected rather than deferred.
+  - `[low]` `[patch]` (verification-gap) `server_tokens off` isn't asserted. — Fixed: GET / asserts `Server: nginx` with no version, and the steady 502 body must not match `/nginx\/\d/`.
+  - `[low]` `[reject]` (verification-gap, other) Nothing runs `pnpm test:stack` automatically. — By design: it needs Docker, and CI/CD is out of scope (NFR).
+  - `[medium]` `[patch]` (edge-case) `up -d` without `--build` after a code change reuses stale `:prod` images. — Fixed: the `compose.yaml` header now says to use `up -d --build` after pulling or changing code. The Story 3.2 README must repeat this in its upgrade section.
+  - `[low]` `[reject]` (edge-case) The smoke run overwrites global image tags. — carried.
+  - `[low]` `[patch]` (edge-case) The recreate test's `{status:"ok"}` assertion was swallowed by `catch`. — Fixed: the body is captured in the loop and asserted after it, outside the try/catch.
+  - `[low]` `[reject]` (edge-case) An exported `WEB_PORT` isn't probed. — carried.
+  - `[low]` `[reject]` (edge-case) The port probe ignores `[::]` and has a race. — carried.
+  - `[low]` `[reject]` (edge-case) VPN and other virtual NICs aren't in the virtual-NIC regex. — Host-specific, and the test still runs, just not over the LAN.
+  - `[low]` `[reject]` (edge-case) Container/host clock skew could push log lines out of the window. — Linux Docker shares the host clock. There's a 1 s margin, and it's rare elsewhere.
+  - `[low]` `[reject]` (edge-case) There is no `proxy_read_timeout`. — Same root cause and evidence as the blind timeout row above.
+  - `[low]` `[reject]` (edge-case) `/api` without a slash returns the SPA. — carried.
+  - `[low]` `[reject]` (edge-case) Unconsumed poll response bodies. — This is a short-lived test process, and undici frees them on GC.
+  - `[low]` `[reject]` (edge-case, claim) The first request accepts 504. — Same evidence as the intent-alignment API-down row above.
+
 ## Design Notes
 
 - **API "production build":** Story 1.1 left this choice to Story 3.1. We run TypeScript through tsx's loader (`node --import tsx`) with production dependencies only, and we don't bundle. `@todos/shared` ships raw `.ts`, and `MIGRATIONS_FOLDER` depends on the source layout, so bundling would mean rewiring both. Running the loader in-process (rather than the `tsx` CLI) keeps a single Node process, so `init: true` delivers SIGTERM straight to `server.ts`'s shutdown handler. Type safety is still gated by `pnpm typecheck` and the tests.
@@ -241,4 +286,42 @@ Blocking condition: intent gap
 - a recorded browser check
 
 **Follow-up review recommendation:** false. This pass patched nothing, so there is nothing to follow up; the next run reviews fresh after re-derivation.
+
+## Auto Run Result (rerun after the AD-9 amendment)
+
+Status: done
+
+**What was implemented:** the production-like stack runs from `compose.yaml` on its own, reachable from other devices on the LAN.
+
+**Files changed:**
+- `apps/web/nginx.conf` (new): the SPA fallback, cache headers, `server_tokens off`, and the same-origin `/api/` proxy. The proxy uses `resolver 127.0.0.11 valid=10s ipv6=off; set $api_upstream http://api:3000; proxy_pass $api_upstream;` (amended AD-9), so a recreated `api` on a new IP keeps working.
+- `apps/web/Dockerfile`: a `build` stage (the Vite build) and a final `prod` stage on `nginx:1.30-alpine`.
+- `apps/api/Dockerfile`: a final `prod` stage with production dependencies only, `NODE_ENV=production`, `tsconfig.base.json`, and `USER node`, running `node --import tsx src/server.ts`. Migrations are applied before it listens.
+- `compose.yaml`: the `:prod` image tags, and header comments that include "use `up -d --build` after code changes".
+- `compose.override.yaml`: the `:dev` image tags, so dev and prod never reuse each other's builds.
+- `scripts/stack-smoke.test.mjs` (new) and `package.json` (`test:stack`): an 11-test HTTP-level suite. It runs in the isolated `todos-smoke` project, and its teardown runs `down -v` on that project only.
+- `_bmad-output/implementation-artifacts/deferred-work.md`: the nginx half of the proxy smoke item is marked resolved.
+
+**Review (after the amendment):** 33 findings.
+- Patches applied (4):
+  - medium: the stale-image upgrade note
+  - low: a time-bounded shutdown log check
+  - low: `Server` header and version assertions
+  - low: the recreate-test assertion moved out of the catch
+- Deferred (1, medium): dev and prod share a project and volume.
+- Rejected: 24 lows and 4 falses, each with its reason in the triage log. There were no highs.
+- Before the patches went in, verification had also tightened the API-down test: after the resolver cache expires, it now asserts exactly 502.
+
+**Follow-up review recommendation:** false. The pass patched 1 medium and 3 lows, and no highs.
+
+**Verification:**
+- `pnpm test:stack`: 11/11 passed after the patches, including the new "API recreated on a new IP" test with the web container not restarted. The `todos-smoke` project was fully removed.
+- `pnpm lint` and `pnpm typecheck`: passed.
+- `pnpm test`: shared 46/46 and web 257/257 passed. api was 157/158: `test/server.test.ts` "on SIGTERM…" fails in this environment only. The spawned server gets `EADDRINUSE` binding an ephemeral port on `0.0.0.0` because the host's ephemeral ports are exhausted. About 81k established connections to the dev API's inspector (`127.0.0.1:9229`) are held by the VS Code server process. The API source and tests are identical to baseline, and the test passed earlier today before the leak grew.
+- The implementation subagent recorded a browser check: headless Chromium at 1280 px and 360 px at the host's LAN IP. Add, toggle, edit, delete, reload and the deep link all worked, with no console errors.
+
+**Residual risks:**
+- The shared dev/prod project and volume (deferred).
+- `pnpm test:stack` runs only by hand.
+- The VS Code inspector connection leak makes `server.test.ts` fail on this host until it is cleared, for example by closing the forwarded/auto-attach debug session for port 9229 or restarting the dev `api` container.
 

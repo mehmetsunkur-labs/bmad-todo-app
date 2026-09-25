@@ -8,6 +8,7 @@ services:
       - ./docker/db-init:/docker-entrypoint-initdb.d:ro
 
   api:
+    image: todos-api:dev
     build:
       target: dev
     command:
@@ -26,6 +27,7 @@ services:
       - api-shared-node-modules:/app/packages/shared/node_modules
 
   web:
+    image: todos-web:dev
     build:
       target: dev
     command:
