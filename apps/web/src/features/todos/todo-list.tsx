@@ -9,9 +9,9 @@ import { useQueryClient } from "@tanstack/react-query"
 import { compareTodos, normalizeDescription, type Todo } from "@todos/shared"
 
 import { useDeleteTodo } from "@/api/hooks/use-delete-todo"
-import { useEditTodo } from "@/api/hooks/use-edit-todo"
+import { type EditTodoVars, useEditTodo } from "@/api/hooks/use-edit-todo"
 import { useRetryTodos, useTodosQuery } from "@/api/hooks/use-todos-query"
-import { useToggleTodo } from "@/api/hooks/use-toggle-todo"
+import { type ToggleTodoVars, useToggleTodo } from "@/api/hooks/use-toggle-todo"
 import { TODOS_QUERY_KEY } from "@/api/query-client"
 import { announce } from "@/lib/announce"
 
@@ -21,6 +21,7 @@ import {
   recordDeleteFocus,
   registerDeleteFocusController,
   showDeleteFailure,
+  withDroppedDelete,
 } from "./delete-failure"
 import { registerEditController, showEditFailure } from "./edit-failure"
 import { EmptyState, LoadErrorState, LoadingState } from "./list-states"
@@ -89,6 +90,41 @@ function pruneExiting(list: readonly Todo[], exiting: ExitingRows) {
   return kept.size === exiting.size ? exiting : kept
 }
 
+/**
+ * Where focus goes when the row `id` leaves the list (Story 2.3's rule),
+ * from the display order before the removal: the next non-exiting rows,
+ * then the previous ones, nearest first. The first one still rendered takes
+ * focus; none means the Add input.
+ */
+function removalFocusTargets(
+  shown: readonly DisplayedRow[],
+  id: string
+): string[] {
+  const index = shown.findIndex((row) => row.todo.id === id)
+  const live = (row: DisplayedRow) => !row.exiting && row.todo.id !== id
+  return [
+    ...shown.slice(index + 1).filter(live),
+    ...shown.slice(0, Math.max(index, 0)).reverse().filter(live),
+  ].map((row) => row.todo.id)
+}
+
+/** The first target's checkbox still rendered, if any. */
+function firstCheckbox(
+  region: HTMLElement | null,
+  targets: readonly string[]
+): HTMLElement | null {
+  for (const id of targets) {
+    const box = checkboxOf(region, id)
+    if (box) return box
+  }
+  return null
+}
+
+// The failure handlers, stable for the hooks: a delete dropped behind a
+// failed toggle or edit reports the delete's outcome instead.
+const onToggleFailure = withDroppedDelete<ToggleTodoVars>(showToggleFailure)
+const onEditFailure = withDroppedDelete<EditTodoVars>(showEditFailure)
+
 const EMPTY: readonly Todo[] = []
 
 /** The one open edit field: its row, its starting text, and whether it takes focus. */
@@ -115,6 +151,9 @@ interface OpenEdit {
  * else the Add input, and "Todo deleted" is announced. The deleted row stays
  * as an exiting copy until its exit motion ends (the Empty state waits for
  * it), or until the id is back in the list (a failed delete's rollback).
+ * Any other removal of a focused row (a `404`, a failed create) moves focus
+ * by the same rule, from the order before the removal. The region is marked
+ * `data-focus-free`: focus on it counts as free for the failure handlers.
  *
  * Edit: at most one edit field is open per list. Opening another commits
  * the open one (its blur saves it first). A save normalizes the text; empty
@@ -126,9 +165,9 @@ export function TodoList() {
   const query = useTodosQuery()
   const queryClient = useQueryClient()
   const retry = useRetryTodos()
-  const toggle = useToggleTodo(showToggleFailure)
+  const toggle = useToggleTodo(onToggleFailure)
   const deleteTodo = useDeleteTodo(showDeleteFailure)
-  const editTodo = useEditTodo(showEditFailure)
+  const editTodo = useEditTodo(onEditFailure)
   const regionRef = useRef<HTMLDivElement>(null)
   const listLoaded = useRef(false)
   const list = query.data ?? EMPTY
@@ -163,7 +202,8 @@ export function TodoList() {
     [setEdit]
   )
 
-  // The latest render, for the stable delete callback.
+  // The latest render, for the stable delete and removal callbacks (a row's
+  // unmount cleanup still sees the order from before the removal).
   const latest = useRef({ list, rows })
   useLayoutEffect(() => {
     latest.current = { list, rows }
@@ -171,6 +211,12 @@ export function TodoList() {
 
   // A failed delete's focus restore waits for the restored row to render.
   const focusRowId = useRef<string | null>(null)
+  // A focused row's removal: the row and its focus targets, resolved after
+  // the commit.
+  const focusRemoval = useRef<{
+    row: HTMLElement
+    targets: string[]
+  } | null>(null)
   const [, setFocusRequest] = useState(0)
   useEffect(
     () =>
@@ -179,10 +225,25 @@ export function TodoList() {
           focusRowId.current = id
           setFocusRequest((n) => n + 1)
         },
+        resendDelete: (id) => deleteTodo({ id }),
       }),
-    []
+    [deleteTodo]
   )
   useLayoutEffect(() => {
+    const removal = focusRemoval.current
+    focusRemoval.current = null
+    // Only a row really gone (not StrictMode's simulated unmount), and only
+    // while its focus hasn't gone anywhere else.
+    const active = document.activeElement
+    if (
+      removal &&
+      !removal.row.isConnected &&
+      (!active || active === document.body)
+    ) {
+      const box = firstCheckbox(regionRef.current, removal.targets)
+      if (box) box.focus()
+      else focusAddRow()
+    }
     const id = focusRowId.current
     if (id === null) return
     const box = checkboxOf(regionRef.current, id)
@@ -215,16 +276,10 @@ export function TodoList() {
   const handleDelete = useCallback(
     (todo: Todo) => {
       const { list: from, rows: shown } = latest.current
-      const index = shown.findIndex((row) => row.todo.id === todo.id)
-      const target =
-        shown.slice(index + 1).find((row) => !row.exiting) ??
-        shown
-          .slice(0, Math.max(index, 0))
-          .reverse()
-          .find((row) => !row.exiting)
-      const targetBox = target
-        ? checkboxOf(regionRef.current, target.todo.id)
-        : null
+      const targetBox = firstCheckbox(
+        regionRef.current,
+        removalFocusTargets(shown, todo.id)
+      )
 
       setExiting((current) =>
         new Map(current).set(todo.id, { todo, from, done: false })
@@ -238,6 +293,16 @@ export function TodoList() {
     },
     [deleteTodo]
   )
+
+  // A focused, non-exiting row left the list (a `404`, a failed create):
+  // focus moves by the delete rule, after the commit.
+  const handleFocusedRemoval = useCallback((id: string, row: HTMLElement) => {
+    focusRemoval.current = {
+      row,
+      targets: removalFocusTargets(latest.current.rows, id),
+    }
+    setFocusRequest((n) => n + 1)
+  }, [])
 
   const closeEdit = useCallback(
     (id: string) => {
@@ -300,7 +365,12 @@ export function TodoList() {
   return (
     <>
       <AddRow status={query.status} />
-      <div ref={regionRef} tabIndex={-1} data-testid="todo-list-region">
+      <div
+        ref={regionRef}
+        tabIndex={-1}
+        data-testid="todo-list-region"
+        data-focus-free=""
+      >
         <RowEntranceContext value={listLoaded}>
           <ListState
             status={query.status}
@@ -314,6 +384,7 @@ export function TodoList() {
             onCancelEdit={closeEdit}
             onDraft={handleDraft}
             onExitDone={handleExitDone}
+            onFocusedRemoval={handleFocusedRemoval}
           />
         </RowEntranceContext>
       </div>
@@ -352,6 +423,7 @@ function ListState({
   onCancelEdit,
   onDraft,
   onExitDone,
+  onFocusedRemoval,
 }: {
   status: ReturnType<typeof useTodosQuery>["status"]
   rows: readonly DisplayedRow[]
@@ -364,6 +436,7 @@ function ListState({
   onCancelEdit: (id: string) => void
   onDraft: (text: string) => void
   onExitDone: (id: string) => void
+  onFocusedRemoval: (id: string, row: HTMLElement) => void
 }) {
   if (status === "pending") return <LoadingState />
   if (status === "error") return <LoadErrorState onRetry={onRetry} />
@@ -388,6 +461,7 @@ function ListState({
             onCancelEdit={onCancelEdit}
             onDraft={onDraft}
             onExitDone={onExitDone}
+            onFocusedRemoval={onFocusedRemoval}
           />
         )
       })}

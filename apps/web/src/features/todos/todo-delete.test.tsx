@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { StrictMode, useEffect } from "react"
 import { act, fireEvent, screen, within } from "@testing-library/react"
 import { REQUEST_TIMEOUT_MS, type Todo } from "@todos/shared"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -416,6 +416,21 @@ describe("TodoRow: delete failure", () => {
     expect(checkbox("Middle")).toHaveFocus()
   })
 
+  it("focus on the list region: it goes to the restored row's checkbox", async () => {
+    await renderPopulated()
+    const del = deferredFetch()
+
+    await click(deleteButton("Middle"))
+    act(() => screen.getByTestId("todo-list-region").focus())
+
+    await del.resolve(serverError())
+    await advance(0)
+
+    expect(rows()).toEqual(["Top", "Middle", "Bottom"])
+    expect(checkbox("Middle")).toHaveFocus()
+    expect(toasts()).toEqual([DELETE_FAILED])
+  })
+
   it("a rollback mid-exit brings the real row back and undoes the motion", async () => {
     const animations: FakeAnimation[] = []
     stubAnimate(animations)
@@ -467,9 +482,13 @@ describe("TodoRow: delete failure", () => {
     expect(checkbox("Middle")).toHaveAttribute("aria-checked", "false")
   })
 
-  it("delete on a pending create that fails: the DELETE is dropped, only the create failure shows", async () => {
+  /**
+   * Adds "Brand new", then deletes it while its POST is still pending (held
+   * by the `fetch` stub `holdPost` installs), and returns what it returned.
+   */
+  async function deletePendingCreate<T>(holdPost: () => T): Promise<T> {
     await renderPopulated()
-    const post = deferredFetch()
+    const held = holdPost()
 
     fireEvent.change(addInput(), { target: { value: "Brand new" } })
     await act(async () => {
@@ -479,13 +498,102 @@ describe("TodoRow: delete failure", () => {
 
     await click(deleteButton("Brand new"))
     expect(rows()).toEqual(["Top", "Middle", "Bottom"])
+    // The delete moved focus to the next row's checkbox.
+    expect(checkbox("Top")).toHaveFocus()
+    expect(deletes()).toHaveLength(0)
+    return held
+  }
+
+  /** A pending fetch the test rejects by hand. */
+  function rejectableFetch() {
+    let reject!: (error: unknown) => void
+    fetchMock.mockImplementationOnce(
+      () => new Promise<Response>((_res, rej) => (reject = rej))
+    )
+    return {
+      reject: (error: unknown) =>
+        act(async () => {
+          reject(error)
+          await vi.advanceTimersByTimeAsync(0)
+        }),
+    }
+  }
+
+  const createFailures: [string, () => Promise<() => Promise<void>>][] = [
+    [
+      "a 5xx",
+      async () => {
+        const post = await deletePendingCreate(deferredFetch)
+        return () => post.resolve(serverError())
+      },
+    ],
+    [
+      "a network error",
+      async () => {
+        const post = await deletePendingCreate(rejectableFetch)
+        return () => post.reject(new TypeError("Failed to fetch"))
+      },
+    ],
+    [
+      `the ${REQUEST_TIMEOUT_MS} ms timeout (the POST may have committed)`,
+      async () => {
+        await deletePendingCreate(hangingFetch)
+        return async () => {
+          await advance(REQUEST_TIMEOUT_MS)
+        }
+      },
+    ],
+  ]
+
+  it.each(createFailures)(
+    "delete on a pending create that fails by %s: the DELETE is still sent, counts as done, no toast, the Add input untouched",
+    async (_name, setup) => {
+      const failPost = await setup()
+      fetchMock.mockResolvedValueOnce(noContent())
+
+      await failPost()
+      await advance(0)
+      await advance(1)
+
+      expect(deletes()).toHaveLength(1)
+      // The DELETE is for the created Todo's id.
+      const [, postInit] = callsWith("POST")[0]!
+      const { id } = JSON.parse(String(postInit!.body)) as { id: string }
+      expect(String(deletes()[0]![0])).toContain(id)
+      expect(rows()).toEqual(["Top", "Middle", "Bottom"])
+      expect(toasts()).toEqual([])
+      expect(addInput()).toHaveValue("")
+      expect(checkbox("Top")).toHaveFocus()
+    }
+  )
+
+  it("the resent DELETE gets a 404: success, no toast", async () => {
+    const post = await deletePendingCreate(deferredFetch)
+    fetchMock.mockResolvedValueOnce(notFound())
 
     await post.resolve(serverError())
     await advance(0)
+    await advance(1)
 
-    expect(deletes()).toHaveLength(0)
+    expect(deletes()).toHaveLength(1)
     expect(rows()).toEqual(["Top", "Middle", "Bottom"])
-    expect(toasts()).toEqual([CREATE_RESTORED])
+    expect(toasts()).toEqual([])
+  })
+
+  it("the resent DELETE fails: one delete toast, the row stays gone", async () => {
+    const post = await deletePendingCreate(deferredFetch)
+    fetchMock.mockResolvedValueOnce(serverError())
+
+    await post.resolve(serverError())
+    await advance(0)
+    await advance(1)
+
+    expect(deletes()).toHaveLength(1)
+    expect(rows()).toEqual(["Top", "Middle", "Bottom"])
+    expect(toasts()).toEqual([DELETE_FAILED])
+    expect(screen.queryByText(/db exploded/)).not.toBeInTheDocument()
+    expect(addInput()).toHaveValue("")
+    expect(checkbox("Top")).toHaveFocus()
   })
 
   it("toggle then delete: the DELETE waits for the PATCH, the row is removed at once", async () => {
@@ -507,6 +615,232 @@ describe("TodoRow: delete failure", () => {
     await del.resolve(noContent())
     expect(rows()).toEqual(["Top", "Bottom"])
     expect(toasts()).toEqual([])
+  })
+})
+
+describe("TodoRow: a delete queued behind a failed toggle", () => {
+  it("PATCH 500: the row is back with its confirmed state, only the delete toast, focus back on its checkbox", async () => {
+    await renderPopulated()
+    const patch = deferredFetch()
+
+    await click(checkbox("Middle"))
+    await click(deleteButton("Middle"))
+    expect(rows()).toEqual(["Top", "Bottom"])
+    expect(checkbox("Bottom")).toHaveFocus()
+
+    await patch.resolve(serverError())
+    await advance(0)
+    await advance(1)
+
+    expect(deletes()).toHaveLength(0)
+    expect(rows()).toEqual(["Top", "Middle", "Bottom"])
+    expect(checkbox("Middle")).toHaveAttribute("aria-checked", "false")
+    expect(queryRow("Middle")).not.toHaveAttribute("inert")
+    expect(toasts()).toEqual([DELETE_FAILED])
+    expect(screen.queryByText(/db exploded/)).not.toBeInTheDocument()
+    expect(checkbox("Middle")).toHaveFocus()
+  })
+
+  it("PATCH 404: the delete counts as done, no toast, focus stays where the delete moved it", async () => {
+    await renderPopulated()
+    const patch = deferredFetch()
+
+    await click(checkbox("Middle"))
+    await click(deleteButton("Middle"))
+    expect(checkbox("Bottom")).toHaveFocus()
+
+    await patch.resolve(notFound())
+    await advance(0)
+    await advance(1)
+
+    expect(deletes()).toHaveLength(0)
+    expect(rows()).toEqual(["Top", "Bottom"])
+    expect(toasts()).toEqual([])
+    expect(checkbox("Bottom")).toHaveFocus()
+  })
+
+  it("a later failed delete of another row still restores its own focus (no stale entry)", async () => {
+    await renderPopulated()
+    const patch = deferredFetch()
+    await click(checkbox("Middle"))
+    await click(deleteButton("Middle"))
+    await patch.resolve(serverError())
+    await advance(0)
+    expect(checkbox("Middle")).toHaveFocus()
+
+    fetchMock.mockResolvedValueOnce(serverError())
+    await click(deleteButton("Top"))
+    await advance(0)
+
+    expect(rows()).toEqual(["Top", "Middle", "Bottom"])
+    expect(checkbox("Top")).toHaveFocus()
+  })
+})
+
+describe("TodoRow: a dropped delete that counts as done, then another failed delete", () => {
+  it("PATCH 404 behind which a delete was dropped: a later failed delete of another row restores its own focus", async () => {
+    await renderPopulated()
+    const patch = deferredFetch()
+    await click(checkbox("Middle"))
+    await click(deleteButton("Middle"))
+    await patch.resolve(notFound())
+    await advance(0)
+    expect(rows()).toEqual(["Top", "Bottom"])
+    expect(toasts()).toEqual([])
+
+    const del = deferredFetch()
+    await click(deleteButton("Top"))
+    expect(checkbox("Bottom")).toHaveFocus()
+    await del.resolve(serverError())
+    await advance(0)
+    await advance(1)
+
+    expect(rows()).toEqual(["Top", "Bottom"])
+    expect(checkbox("Top")).toHaveFocus()
+    expect(toasts()).toEqual([DELETE_FAILED])
+  })
+})
+
+describe("TodoRow: focus after a removal", () => {
+  const TOGGLE_FAILED = "Couldn't update that todo. Please try again."
+
+  it.each([
+    ["the checkbox", (name: string) => checkbox(name)],
+    ["Delete", (name: string) => deleteButton(name)],
+    [
+      "Edit",
+      (name: string) =>
+        screen.getByRole("button", { name: `Edit todo: ${name}` }),
+    ],
+  ])(
+    "a toggle 404 removes the focused row (focus on %s): focus goes to the next row's checkbox",
+    async (_where, target) => {
+      await renderPopulated()
+      const patch = deferredFetch()
+      await click(checkbox("Middle"))
+      act(() => target("Middle").focus())
+
+      await patch.resolve(notFound())
+      await advance(0)
+      await advance(1)
+
+      expect(rows()).toEqual(["Top", "Bottom"])
+      expect(checkbox("Bottom")).toHaveFocus()
+      expect(toasts()).toEqual([TOGGLE_FAILED])
+    }
+  )
+
+  it("the bottom row: focus goes to the previous row's checkbox", async () => {
+    await renderPopulated()
+    const patch = deferredFetch()
+    await click(checkbox("Bottom"))
+
+    await patch.resolve(notFound())
+    await advance(0)
+
+    expect(rows()).toEqual(["Top", "Middle"])
+    expect(checkbox("Middle")).toHaveFocus()
+  })
+
+  it("the only row: focus goes to the Add input", async () => {
+    await renderPopulated([middle])
+    const patch = deferredFetch()
+    await click(checkbox("Middle"))
+
+    await patch.resolve(notFound())
+    await advance(0)
+
+    expect(rows()).toEqual([])
+    expect(addInput()).toHaveFocus()
+  })
+
+  it("skips rows that are still exiting", async () => {
+    await renderPopulated()
+    const patch = deferredFetch()
+    const del = deferredFetch()
+    await click(checkbox("Middle"))
+    // Bottom is exiting (its DELETE pending); focus goes back to Middle.
+    await click(deleteButton("Bottom"))
+    act(() => checkbox("Middle").focus())
+
+    await patch.resolve(notFound())
+    await advance(0)
+
+    expect(checkbox("Top")).toHaveFocus()
+    await del.resolve(noContent())
+  })
+
+  describe("under StrictMode (its simulated unmount is not a removal)", () => {
+    async function renderStrict() {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ todos: [top, middle, bottom] })
+      )
+      renderWithProviders(
+        <StrictMode>
+          <TodoList />
+        </StrictMode>
+      )
+      await advance(0)
+    }
+
+    it("a failed delete's restored row keeps the focus it is given", async () => {
+      await renderStrict()
+      const del = deferredFetch()
+      await click(deleteButton("Middle"))
+      await advance(1000)
+      expect(rows()).toEqual(["Top", "Bottom"])
+
+      await del.resolve(serverError())
+      await advance(0)
+      await advance(1)
+
+      expect(rows()).toEqual(["Top", "Middle", "Bottom"])
+      expect(checkbox("Middle")).toHaveFocus()
+    })
+
+    it("a toggle 404 on the focused row still moves focus to the next row", async () => {
+      await renderStrict()
+      const patch = deferredFetch()
+      await click(checkbox("Middle"))
+
+      await patch.resolve(notFound())
+      await advance(0)
+
+      expect(rows()).toEqual(["Top", "Bottom"])
+      expect(checkbox("Bottom")).toHaveFocus()
+    })
+  })
+
+  it("an unfocused row's removal leaves focus alone", async () => {
+    await renderPopulated()
+    const patch = deferredFetch()
+    await click(checkbox("Middle"))
+    act(() => addInput().focus())
+
+    await patch.resolve(notFound())
+    await advance(0)
+
+    expect(rows()).toEqual(["Top", "Bottom"])
+    expect(addInput()).toHaveFocus()
+  })
+
+  it("a failed create removes the focused pending row: focus goes to the next row's checkbox, the create UI is unchanged", async () => {
+    await renderPopulated()
+    const post = deferredFetch()
+    fireEvent.change(addInput(), { target: { value: "Brand new" } })
+    await act(async () => {
+      fireEvent.submit(addInput().closest("form")!)
+    })
+    act(() => checkbox("Brand new").focus())
+
+    await post.resolve(serverError())
+    await advance(0)
+    await advance(1)
+
+    expect(rows()).toEqual(["Top", "Middle", "Bottom"])
+    expect(checkbox("Top")).toHaveFocus()
+    expect(addInput()).toHaveValue("Brand new")
+    expect(toasts()).toEqual([CREATE_RESTORED])
   })
 })
 

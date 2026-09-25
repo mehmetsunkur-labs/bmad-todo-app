@@ -189,6 +189,13 @@ export interface TodoMutationFailure<TVars> {
   readonly error: unknown
   /** Runs the same mutation again with the same variables (same `id`). */
   readonly retry: () => void
+  /**
+   * The kinds of the ops queued behind the failed one on the same Todo,
+   * in order: dropped by this failure, never sent.
+   */
+  readonly dropped: readonly TodoWriteKind[]
+  /** What the Todo renders as after the rollback (`null` = no row). */
+  readonly state: Todo | null
 }
 
 export interface TodoMutationConfig<TVars extends { id: string }> {
@@ -237,8 +244,9 @@ export interface TodoMutation<TVars extends { id: string }> {
  * - `onSuccess`: set `confirmed(id)`, remove the op, re-render.
  * - `onError` with `DroppedError`: remove the op, nothing else.
  * - `onError` otherwise: bump the generation, apply the kind's
- *   `failureState` mapping to `confirmed(id)`, clear `pending(id)`,
- *   re-render from `confirmed(id)`, and call `onFailure` exactly once.
+ *   `failureState` mapping to `confirmed(id)`, clear `pending(id)` (the
+ *   queued ops' kinds are reported as `dropped`), re-render from
+ *   `confirmed(id)`, and call `onFailure` exactly once with that `state`.
  *
  * Never calls `invalidateQueries`, and keeps the pinned mutation defaults.
  */
@@ -291,12 +299,17 @@ export function createTodoMutation<TVars extends { id: string }>(
           sync.generation.set(id, (sync.generation.get(id) ?? 0) + 1)
           const known = config.failureState?.(error, vars)
           if (known !== undefined) sync.confirmed.set(id, known)
+          const dropped = (sync.pending.get(id) ?? [])
+            .filter((o) => o !== op)
+            .map((o) => o.kind)
           sync.pending.delete(id)
           renderTodo(queryClient, id)
           config.onFailure({
             vars,
             error,
             retry: () => void mutation.mutate(queryClient, vars),
+            dropped,
+            state: renderedTodo(sync, id),
           })
         },
       }

@@ -4,3 +4,4 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-2-complete-and-un-complete-a-todo.md`
   summary: When a toggle's (or, since Story 2.4, an edit's) PATCH `404` removes a focused row, focus falls to `<body>`; reuse Story 2.3's focus-after-removal rule (next row's checkbox, else the previous row's, else the Add input).
   evidence: EXPERIENCE.md says focus is never lost to `<body>`. Story 2.2's `404` rollback removes the row with no focus handling, and Story 2.3 (`spec-2-3-delete-a-todo.md`) explicitly left that path out of scope.
+  resolution: Resolved by `_bmad-output/implementation-artifacts/spec-epic-2-retro-fix-now.md` (Epic 2 retro item 10): a focused, non-exiting row that leaves the list (toggle or edit `404`, failed create) now moves focus by Story 2.3's rule.

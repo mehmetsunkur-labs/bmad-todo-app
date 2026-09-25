@@ -1,0 +1,1088 @@
+diff --git a/_bmad-output/implementation-artifacts/deferred-work.md b/_bmad-output/implementation-artifacts/deferred-work.md
+index a6607e5..068e2e8 100644
+--- a/_bmad-output/implementation-artifacts/deferred-work.md
++++ b/_bmad-output/implementation-artifacts/deferred-work.md
+@@ -4,3 +4,4 @@
+ - source_spec: `_bmad-output/implementation-artifacts/spec-2-2-complete-and-un-complete-a-todo.md`
+   summary: When a toggle's (or, since Story 2.4, an edit's) PATCH `404` removes a focused row, focus falls to `<body>`; reuse Story 2.3's focus-after-removal rule (next row's checkbox, else the previous row's, else the Add input).
+   evidence: EXPERIENCE.md says focus is never lost to `<body>`. Story 2.2's `404` rollback removes the row with no focus handling, and Story 2.3 (`spec-2-3-delete-a-todo.md`) explicitly left that path out of scope.
++  resolution: Resolved by `_bmad-output/implementation-artifacts/spec-epic-2-retro-fix-now.md` (Epic 2 retro item 10): a focused, non-exiting row that leaves the list (toggle or edit `404`, failed create) now moves focus by Story 2.3's rule.
+diff --git a/apps/web/src/api/todo-sync.test.ts b/apps/web/src/api/todo-sync.test.ts
+index 01f150c..fb0b67e 100644
+--- a/apps/web/src/api/todo-sync.test.ts
++++ b/apps/web/src/api/todo-sync.test.ts
+@@ -738,6 +738,10 @@ describe("createTodoMutation: delete kind", () => {
+ 
+     expect(deleteRequest).not.toHaveBeenCalled()
+     expect(createFailure).toHaveBeenCalledTimes(1)
++    expect(createFailure.mock.calls[0]![0]).toMatchObject({
++      dropped: ["delete"],
++      state: null,
++    })
+     expect(deleteFailure).not.toHaveBeenCalled()
+     expect(ids()).toEqual([other.id, todo.id])
+     expect(sync.pending.has(NEW_ID)).toBe(false)
+@@ -895,6 +899,41 @@ describe("createTodoMutation: edit kind", () => {
+     expect(sync.confirmed.get(todo.id)).toBeNull()
+     expect(ids()).toEqual([other.id])
+     expect(onFailure).toHaveBeenCalledTimes(1)
++    expect(onFailure.mock.calls[0]![0]).toMatchObject({
++      dropped: [],
++      state: null,
++    })
++  })
++
++  it("a 404 with a delete queued: the failure reports the dropped delete and no Todo", async () => {
++    const { queryClient, sync, ids } = setup()
++    const patch = deferred<Todo>()
++    const deleteRequest = vi.fn(async () => null)
++    const { mutation: edit, onFailure: editFailure } = editKind(
++      () => patch.promise
++    )
++    const { mutation: remove, onFailure: deleteFailure } =
++      deleteKind(deleteRequest)
++
++    const editDone = edit.mutate(queryClient, {
++      id: todo.id,
++      description: "new",
++    })
++    const deleteDone = remove.mutate(queryClient, { id: todo.id })
++    await flush()
++
++    patch.reject(new HttpError("NOT_FOUND", { status: 404 }))
++    await Promise.all([editDone, deleteDone])
++
++    expect(deleteRequest).not.toHaveBeenCalled()
++    expect(editFailure).toHaveBeenCalledTimes(1)
++    expect(editFailure.mock.calls[0]![0]).toMatchObject({
++      dropped: ["delete"],
++      state: null,
++    })
++    expect(deleteFailure).not.toHaveBeenCalled()
++    expect(ids()).toEqual([other.id])
++    expect(sync.pending.has(todo.id)).toBe(false)
+   })
+ 
+   it("delete during a pending edit: the DELETE waits for the PATCH, the row is removed at once", async () => {
+@@ -954,6 +993,11 @@ describe("createTodoMutation: edit kind", () => {
+ 
+     expect(deleteRequest).not.toHaveBeenCalled()
+     expect(editFailure).toHaveBeenCalledTimes(1)
++    // The dropped kinds exclude the failed op; the state is the rollback's.
++    expect(editFailure.mock.calls[0]![0]).toMatchObject({
++      dropped: ["delete"],
++      state: todo,
++    })
+     expect(deleteFailure).not.toHaveBeenCalled()
+     expect(ids()).toEqual([other.id, todo.id])
+     expect(list()[1]).toEqual(todo)
+diff --git a/apps/web/src/api/todo-sync.ts b/apps/web/src/api/todo-sync.ts
+index dc7694e..390a713 100644
+--- a/apps/web/src/api/todo-sync.ts
++++ b/apps/web/src/api/todo-sync.ts
+@@ -189,6 +189,13 @@ export interface TodoMutationFailure<TVars> {
+   readonly error: unknown
+   /** Runs the same mutation again with the same variables (same `id`). */
+   readonly retry: () => void
++  /**
++   * The kinds of the ops queued behind the failed one on the same Todo,
++   * in order: dropped by this failure, never sent.
++   */
++  readonly dropped: readonly TodoWriteKind[]
++  /** What the Todo renders as after the rollback (`null` = no row). */
++  readonly state: Todo | null
+ }
+ 
+ export interface TodoMutationConfig<TVars extends { id: string }> {
+@@ -237,8 +244,9 @@ export interface TodoMutation<TVars extends { id: string }> {
+  * - `onSuccess`: set `confirmed(id)`, remove the op, re-render.
+  * - `onError` with `DroppedError`: remove the op, nothing else.
+  * - `onError` otherwise: bump the generation, apply the kind's
+- *   `failureState` mapping to `confirmed(id)`, clear `pending(id)`,
+- *   re-render from `confirmed(id)`, and call `onFailure` exactly once.
++ *   `failureState` mapping to `confirmed(id)`, clear `pending(id)` (the
++ *   queued ops' kinds are reported as `dropped`), re-render from
++ *   `confirmed(id)`, and call `onFailure` exactly once with that `state`.
+  *
+  * Never calls `invalidateQueries`, and keeps the pinned mutation defaults.
+  */
+@@ -291,12 +299,17 @@ export function createTodoMutation<TVars extends { id: string }>(
+           sync.generation.set(id, (sync.generation.get(id) ?? 0) + 1)
+           const known = config.failureState?.(error, vars)
+           if (known !== undefined) sync.confirmed.set(id, known)
++          const dropped = (sync.pending.get(id) ?? [])
++            .filter((o) => o !== op)
++            .map((o) => o.kind)
+           sync.pending.delete(id)
+           renderTodo(queryClient, id)
+           config.onFailure({
+             vars,
+             error,
+             retry: () => void mutation.mutate(queryClient, vars),
++            dropped,
++            state: renderedTodo(sync, id),
+           })
+         },
+       }
+diff --git a/apps/web/src/features/todos/add-row.test.tsx b/apps/web/src/features/todos/add-row.test.tsx
+index cb7404a..00d8348 100644
+--- a/apps/web/src/features/todos/add-row.test.tsx
++++ b/apps/web/src/features/todos/add-row.test.tsx
+@@ -409,6 +409,23 @@ describe("Add row: failed create, input empty", () => {
+   })
+ 
+   it("leaves focus alone when it is elsewhere", async () => {
++    await renderPopulated()
++    const post = deferredFetch()
++    await add("Buy milk")
++    const elsewhere = screen.getByRole("checkbox", { name: "Existing" })
++    await act(async () => {
++      elsewhere.focus()
++    })
++
++    await post.resolve(
++      jsonResponse({ error: { code: "INTERNAL", message: "x" } }, 500)
++    )
++    expect(input()).toHaveValue("Buy milk")
++    expect(elsewhere).toHaveFocus()
++    expect(toasts()).toEqual([RESTORED])
++  })
++
++  it("moves focus to the input from the list region (free focus, like <body>)", async () => {
+     await renderPopulated()
+     const post = deferredFetch()
+     await add("Buy milk")
+@@ -421,7 +438,7 @@ describe("Add row: failed create, input empty", () => {
+       jsonResponse({ error: { code: "INTERNAL", message: "x" } }, 500)
+     )
+     expect(input()).toHaveValue("Buy milk")
+-    expect(region).toHaveFocus()
++    expect(input()).toHaveFocus()
+     expect(toasts()).toEqual([RESTORED])
+   })
+ })
+diff --git a/apps/web/src/features/todos/add-row.tsx b/apps/web/src/features/todos/add-row.tsx
+index 3a8acda..089da6c 100644
+--- a/apps/web/src/features/todos/add-row.tsx
++++ b/apps/web/src/features/todos/add-row.tsx
+@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from "react"
+ import { v7 as uuidv7 } from "uuid"
+ import { DESCRIPTION_MAX, normalizeDescription } from "@todos/shared"
+ 
+-import { useCreateTodo } from "@/api/hooks/use-create-todo"
++import { type CreateTodoVars, useCreateTodo } from "@/api/hooks/use-create-todo"
+ import { Button } from "@/components/ui/button"
+ import { Input } from "@/components/ui/input"
+ import { announce } from "@/lib/announce"
+@@ -11,6 +11,11 @@ import { HOVER_POINTER_QUERY, matchesMedia } from "@/lib/use-media-query"
+ import { CharacterCounter } from "./character-counter"
+ import { counterAnnouncement } from "./counter-announcement"
+ import { registerAddRowController, showCreateFailure } from "./create-failure"
++import { withDroppedDelete } from "./delete-failure"
++
++// Stable for the hook: a delete dropped behind a failed create counts as
++// done (the row stays gone, the text stays out of the box).
++const onCreateFailure = withDroppedDelete<CreateTodoVars>(showCreateFailure)
+ 
+ /**
+  * The Add row: a `<form>` with the "New todo" input and the primary "Add"
+@@ -40,7 +45,7 @@ export function AddRow({
+   // the next submit, replaced by a newer restore.
+   const restoredRef = useRef<{ id: string; description: string } | null>(null)
+   const disabled = status !== "success"
+-  const createTodo = useCreateTodo(showCreateFailure)
++  const createTodo = useCreateTodo(onCreateFailure)
+ 
+   useEffect(
+     () =>
+diff --git a/apps/web/src/features/todos/create-failure.ts b/apps/web/src/features/todos/create-failure.ts
+index 0d65db4..3ad7b7c 100644
+--- a/apps/web/src/features/todos/create-failure.ts
++++ b/apps/web/src/features/todos/create-failure.ts
+@@ -5,6 +5,8 @@ import { HttpError } from "@/api/http"
+ import { announce } from "@/lib/announce"
+ import { showErrorToast } from "@/lib/toast"
+ 
++import { focusIsFree } from "./free-focus"
++
+ export const CREATE_RESTORED_COPY =
+   "Couldn't add that todo. Your text is back in the box."
+ export const TOO_LONG_COPY =
+@@ -67,7 +69,8 @@ export function isTooLong(error: unknown): boolean {
+  *
+  * - Input empty: the sent (normalized) Description goes back into the input
+  *   (with its `id`, reused if that text is resubmitted unchanged), focus
+- *   moves there only from `<body>` or the Add row, and a plain toast says so.
++ *   moves there only from free focus (`focusIsFree`) or the Add row, and a
++ *   plain toast says so.
+  * - Input has text: it is left alone, and a persistent toast quotes the
+  *   failed Description with "Retry" (same `id` and Description).
+  * - `too_long`: the too-long copy replaces either message.
+@@ -77,8 +80,7 @@ export function showCreateFailure({ vars, error, retry }: CreateTodoFailure) {
+   const addRow = controller
+ 
+   if (addRow && normalizeDescription(addRow.getValue()) === "") {
+-    const active = document.activeElement
+-    const focusWasFree = !active || active === document.body
++    const focusWasFree = focusIsFree()
+     const focusInAddRow = addRow.containsFocus()
+     addRow.restore(vars.description, vars.id)
+     if (focusWasFree || focusInAddRow) addRow.focus()
+diff --git a/apps/web/src/features/todos/delete-failure.ts b/apps/web/src/features/todos/delete-failure.ts
+index 731e945..12c2010 100644
+--- a/apps/web/src/features/todos/delete-failure.ts
++++ b/apps/web/src/features/todos/delete-failure.ts
+@@ -1,6 +1,9 @@
+ import type { DeleteTodoFailure } from "@/api/hooks/use-delete-todo"
++import type { TodoMutationFailure } from "@/api/todo-sync"
+ import { showErrorToast } from "@/lib/toast"
+ 
++import { focusIsFree } from "./free-focus"
++
+ export const DELETE_FAILED_COPY = "Couldn't delete that todo. Please try again."
+ 
+ /**
+@@ -33,18 +36,50 @@ export function recordDeleteFocus(id: string, element: Element | null): void {
+ }
+ 
+ /**
+- * The delete kind's failure handler (the row is already back at its
++ * The delete failure UI for `id` (the row is already back at its
+  * `compareTodos` position with its confirmed state). One plain toast; the
+  * API's `message` is never shown. If focus is still where the delete moved
+- * it (or on `<body>`), it goes to the restored row's checkbox; otherwise
+- * it stays put.
++ * it (or free, see `focusIsFree`), it goes to the restored row's checkbox;
++ * otherwise it stays put.
+  */
+-export function showDeleteFailure({ vars }: DeleteTodoFailure): void {
+-  const moved = movedFocus.get(vars.id)
+-  movedFocus.delete(vars.id)
+-  const active = document.activeElement
+-  const focusWasFree = !active || active === document.body
+-  const focusStillMoved = !!moved && active === moved
+-  if (focusWasFree || focusStillMoved) controller?.focusRow(vars.id)
++function deleteFailed(id: string): void {
++  const moved = movedFocus.get(id)
++  movedFocus.delete(id)
++  const focusStillMoved = !!moved && document.activeElement === moved
++  if (focusIsFree() || focusStillMoved) controller?.focusRow(id)
+   showErrorToast(DELETE_FAILED_COPY)
+ }
++
++/** The delete kind's failure handler. */
++export function showDeleteFailure({ vars }: DeleteTodoFailure): void {
++  deleteFailed(vars.id)
++}
++
++/**
++ * Wraps another kind's failure handler for a delete queued behind it: when
++ * the failure dropped a delete, the delete's outcome is reported instead of
++ * the failed write's UI (no edit reopens, no text returns to the Add row).
++ *
++ * - The Todo renders as gone after the rollback (a `404`, or a failed
++ *   create): the delete counts as done (AD-4). No toast, nothing restored,
++ *   and focus stays where the delete moved it.
++ * - The Todo is back: the delete failed, with the delete failure UI.
++ *
++ * Without a dropped delete, `handler` runs as before.
++ */
++export function withDroppedDelete<TVars extends { id: string }>(
++  handler: (failure: TodoMutationFailure<TVars>) => void
++): (failure: TodoMutationFailure<TVars>) => void {
++  return (failure) => {
++    if (!failure.dropped.includes("delete")) {
++      handler(failure)
++      return
++    }
++    const { id } = failure.vars
++    if (failure.state === null) {
++      movedFocus.delete(id)
++      return
++    }
++    deleteFailed(id)
++  }
++}
+diff --git a/apps/web/src/features/todos/edit-failure.ts b/apps/web/src/features/todos/edit-failure.ts
+index dfe6642..5e60180 100644
+--- a/apps/web/src/features/todos/edit-failure.ts
++++ b/apps/web/src/features/todos/edit-failure.ts
+@@ -9,6 +9,7 @@ import {
+   RETRY_LABEL,
+   TOO_LONG_COPY,
+ } from "./create-failure"
++import { focusIsFree } from "./free-focus"
+ 
+ export const EDIT_FAILED_COPY = "Couldn't save your edit. Please try again."
+ 
+@@ -49,8 +50,8 @@ export function registerEditController(next: EditController): () => void {
+  * never shown.
+  *
+  * - No edit open (and not a `404`): the row reopens its edit field with the
+- *   sent text, focused only if focus was on `<body>` or inside that row, and
+- *   a plain toast says so.
++ *   sent text, focused only if focus was free (see `focusIsFree`) or inside
++ *   that row, and a plain toast says so.
+  * - Another edit open (or this row's own edit reopened), or a `404`: the
+  *   text being typed is never touched; a persistent toast quotes the sent
+  *   text with "Retry", which resends the same PATCH and announces
+@@ -63,9 +64,7 @@ export function showEditFailure({ vars, error, retry }: EditTodoFailure) {
+   const list = controller
+ 
+   if (list && !notFound && list.openEditId() === null) {
+-    const active = document.activeElement
+-    const focusWasFree = !active || active === document.body
+-    const focus = focusWasFree || list.containsFocus(vars.id)
++    const focus = focusIsFree() || list.containsFocus(vars.id)
+     list.reopen(vars.id, vars.description, focus)
+     showErrorToast(tooLong ? TOO_LONG_COPY : EDIT_FAILED_COPY)
+     return
+diff --git a/apps/web/src/features/todos/edit-field.tsx b/apps/web/src/features/todos/edit-field.tsx
+index e81ca52..a18fa59 100644
+--- a/apps/web/src/features/todos/edit-field.tsx
++++ b/apps/web/src/features/todos/edit-field.tsx
+@@ -24,6 +24,8 @@ const LINE_BREAK = /\r\n|\r|\n/g
+  *   (`onSave(value, "blur")`), Escape cancels (`onCancel()`) and
+  *   `preventDefault`s so the Toaster doesn't also dismiss a toast.
+  * - Switching away from the window blurs without saving.
++ * - It shows the design-system focus ring (2 px `ring`, 2 px offset), which
++ *   the base Textarea's `outline-none` would otherwise hide.
+  * - Closing sets a flag first: the blur some browsers fire when the focused
+  *   field is removed never saves a second time, or after Escape.
+  */
+@@ -118,7 +120,7 @@ export function EditField({
+           if (!document.hasFocus()) return
+           close(() => onSave(value, "blur"))
+         }}
+-        className="min-h-0 resize-none overflow-hidden rounded-none border-0 border-b bg-transparent px-0 py-0 text-(length:--text-todo-description) leading-(--text-todo-description--line-height) wrap-anywhere focus-visible:ring-0 md:text-(length:--text-todo-description) dark:bg-transparent"
++        className="min-h-0 resize-none overflow-hidden rounded-none border-0 border-b bg-transparent px-0 py-0 text-(length:--text-todo-description) leading-(--text-todo-description--line-height) wrap-anywhere focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus-visible:outline-solid md:text-(length:--text-todo-description) dark:bg-transparent"
+       />
+       <CharacterCounter length={value.length} />
+     </div>
+diff --git a/apps/web/src/features/todos/free-focus.ts b/apps/web/src/features/todos/free-focus.ts
+new file mode 100644
+index 0000000..ce1f226
+--- /dev/null
++++ b/apps/web/src/features/todos/free-focus.ts
+@@ -0,0 +1,17 @@
++/** The attribute that marks an element as "free" focus (the list region). */
++const FOCUS_FREE_ATTRIBUTE = "data-focus-free"
++
++/**
++ * Whether focus is "free": on nothing, on `<body>`, or on an element marked
++ * `data-focus-free` (the list region, where a click on blank list space or
++ * "Try again" leaves it). A failure handler may then move focus without
++ * taking it from anything the user chose.
++ */
++export function focusIsFree(): boolean {
++  const active = document.activeElement
++  return (
++    !active ||
++    active === document.body ||
++    active.hasAttribute(FOCUS_FREE_ATTRIBUTE)
++  )
++}
+diff --git a/apps/web/src/features/todos/todo-delete.test.tsx b/apps/web/src/features/todos/todo-delete.test.tsx
+index 1fcf54a..761be9e 100644
+--- a/apps/web/src/features/todos/todo-delete.test.tsx
++++ b/apps/web/src/features/todos/todo-delete.test.tsx
+@@ -1,4 +1,4 @@
+-import { useEffect } from "react"
++import { StrictMode, useEffect } from "react"
+ import { act, fireEvent, screen, within } from "@testing-library/react"
+ import { REQUEST_TIMEOUT_MS, type Todo } from "@todos/shared"
+ import { afterEach, describe, expect, it, vi } from "vitest"
+@@ -467,7 +467,7 @@ describe("TodoRow: delete failure", () => {
+     expect(checkbox("Middle")).toHaveAttribute("aria-checked", "false")
+   })
+ 
+-  it("delete on a pending create that fails: the DELETE is dropped, only the create failure shows", async () => {
++  it("delete on a pending create that fails: the DELETE is dropped and counts as done, no toast, the Add input untouched", async () => {
+     await renderPopulated()
+     const post = deferredFetch()
+ 
+@@ -480,12 +480,18 @@ describe("TodoRow: delete failure", () => {
+     await click(deleteButton("Brand new"))
+     expect(rows()).toEqual(["Top", "Middle", "Bottom"])
+ 
++    // The delete moved focus to the next row's checkbox.
++    expect(checkbox("Top")).toHaveFocus()
++
+     await post.resolve(serverError())
+     await advance(0)
++    await advance(1)
+ 
+     expect(deletes()).toHaveLength(0)
+     expect(rows()).toEqual(["Top", "Middle", "Bottom"])
+-    expect(toasts()).toEqual([CREATE_RESTORED])
++    expect(toasts()).toEqual([])
++    expect(addInput()).toHaveValue("")
++    expect(checkbox("Top")).toHaveFocus()
+   })
+ 
+   it("toggle then delete: the DELETE waits for the PATCH, the row is removed at once", async () => {
+@@ -510,6 +516,208 @@ describe("TodoRow: delete failure", () => {
+   })
+ })
+ 
++describe("TodoRow: a delete queued behind a failed toggle", () => {
++  it("PATCH 500: the row is back with its confirmed state, only the delete toast, focus back on its checkbox", async () => {
++    await renderPopulated()
++    const patch = deferredFetch()
++
++    await click(checkbox("Middle"))
++    await click(deleteButton("Middle"))
++    expect(rows()).toEqual(["Top", "Bottom"])
++    expect(checkbox("Bottom")).toHaveFocus()
++
++    await patch.resolve(serverError())
++    await advance(0)
++    await advance(1)
++
++    expect(deletes()).toHaveLength(0)
++    expect(rows()).toEqual(["Top", "Middle", "Bottom"])
++    expect(checkbox("Middle")).toHaveAttribute("aria-checked", "false")
++    expect(queryRow("Middle")).not.toHaveAttribute("inert")
++    expect(toasts()).toEqual([DELETE_FAILED])
++    expect(screen.queryByText(/db exploded/)).not.toBeInTheDocument()
++    expect(checkbox("Middle")).toHaveFocus()
++  })
++
++  it("PATCH 404: the delete counts as done, no toast, focus stays where the delete moved it", async () => {
++    await renderPopulated()
++    const patch = deferredFetch()
++
++    await click(checkbox("Middle"))
++    await click(deleteButton("Middle"))
++    expect(checkbox("Bottom")).toHaveFocus()
++
++    await patch.resolve(notFound())
++    await advance(0)
++    await advance(1)
++
++    expect(deletes()).toHaveLength(0)
++    expect(rows()).toEqual(["Top", "Bottom"])
++    expect(toasts()).toEqual([])
++    expect(checkbox("Bottom")).toHaveFocus()
++  })
++
++  it("a later failed delete of another row still restores its own focus (no stale entry)", async () => {
++    await renderPopulated()
++    const patch = deferredFetch()
++    await click(checkbox("Middle"))
++    await click(deleteButton("Middle"))
++    await patch.resolve(serverError())
++    await advance(0)
++    expect(checkbox("Middle")).toHaveFocus()
++
++    fetchMock.mockResolvedValueOnce(serverError())
++    await click(deleteButton("Top"))
++    await advance(0)
++
++    expect(rows()).toEqual(["Top", "Middle", "Bottom"])
++    expect(checkbox("Top")).toHaveFocus()
++  })
++})
++
++describe("TodoRow: focus after a removal", () => {
++  const TOGGLE_FAILED = "Couldn't update that todo. Please try again."
++
++  it.each([
++    ["the checkbox", (name: string) => checkbox(name)],
++    ["Delete", (name: string) => deleteButton(name)],
++    [
++      "Edit",
++      (name: string) =>
++        screen.getByRole("button", { name: `Edit todo: ${name}` }),
++    ],
++  ])(
++    "a toggle 404 removes the focused row (focus on %s): focus goes to the next row's checkbox",
++    async (_where, target) => {
++      await renderPopulated()
++      const patch = deferredFetch()
++      await click(checkbox("Middle"))
++      act(() => target("Middle").focus())
++
++      await patch.resolve(notFound())
++      await advance(0)
++      await advance(1)
++
++      expect(rows()).toEqual(["Top", "Bottom"])
++      expect(checkbox("Bottom")).toHaveFocus()
++      expect(toasts()).toEqual([TOGGLE_FAILED])
++    }
++  )
++
++  it("the bottom row: focus goes to the previous row's checkbox", async () => {
++    await renderPopulated()
++    const patch = deferredFetch()
++    await click(checkbox("Bottom"))
++
++    await patch.resolve(notFound())
++    await advance(0)
++
++    expect(rows()).toEqual(["Top", "Middle"])
++    expect(checkbox("Middle")).toHaveFocus()
++  })
++
++  it("the only row: focus goes to the Add input", async () => {
++    await renderPopulated([middle])
++    const patch = deferredFetch()
++    await click(checkbox("Middle"))
++
++    await patch.resolve(notFound())
++    await advance(0)
++
++    expect(rows()).toEqual([])
++    expect(addInput()).toHaveFocus()
++  })
++
++  it("skips rows that are still exiting", async () => {
++    await renderPopulated()
++    const patch = deferredFetch()
++    const del = deferredFetch()
++    await click(checkbox("Middle"))
++    // Bottom is exiting (its DELETE pending); focus goes back to Middle.
++    await click(deleteButton("Bottom"))
++    act(() => checkbox("Middle").focus())
++
++    await patch.resolve(notFound())
++    await advance(0)
++
++    expect(checkbox("Top")).toHaveFocus()
++    await del.resolve(noContent())
++  })
++
++  describe("under StrictMode (its simulated unmount is not a removal)", () => {
++    async function renderStrict() {
++      fetchMock.mockResolvedValueOnce(
++        jsonResponse({ todos: [top, middle, bottom] })
++      )
++      renderWithProviders(
++        <StrictMode>
++          <TodoList />
++        </StrictMode>
++      )
++      await advance(0)
++    }
++
++    it("a failed delete's restored row keeps the focus it is given", async () => {
++      await renderStrict()
++      const del = deferredFetch()
++      await click(deleteButton("Middle"))
++      await advance(1000)
++      expect(rows()).toEqual(["Top", "Bottom"])
++
++      await del.resolve(serverError())
++      await advance(0)
++      await advance(1)
++
++      expect(rows()).toEqual(["Top", "Middle", "Bottom"])
++      expect(checkbox("Middle")).toHaveFocus()
++    })
++
++    it("a toggle 404 on the focused row still moves focus to the next row", async () => {
++      await renderStrict()
++      const patch = deferredFetch()
++      await click(checkbox("Middle"))
++
++      await patch.resolve(notFound())
++      await advance(0)
++
++      expect(rows()).toEqual(["Top", "Bottom"])
++      expect(checkbox("Bottom")).toHaveFocus()
++    })
++  })
++
++  it("an unfocused row's removal leaves focus alone", async () => {
++    await renderPopulated()
++    const patch = deferredFetch()
++    await click(checkbox("Middle"))
++    act(() => addInput().focus())
++
++    await patch.resolve(notFound())
++    await advance(0)
++
++    expect(rows()).toEqual(["Top", "Bottom"])
++    expect(addInput()).toHaveFocus()
++  })
++
++  it("a failed create removes the focused pending row: focus goes to the next row's checkbox, the create UI is unchanged", async () => {
++    await renderPopulated()
++    const post = deferredFetch()
++    fireEvent.change(addInput(), { target: { value: "Brand new" } })
++    await act(async () => {
++      fireEvent.submit(addInput().closest("form")!)
++    })
++    act(() => checkbox("Brand new").focus())
++
++    await post.resolve(serverError())
++    await advance(0)
++    await advance(1)
++
++    expect(rows()).toEqual(["Top", "Middle", "Bottom"])
++    expect(checkbox("Top")).toHaveFocus()
++    expect(addInput()).toHaveValue("Brand new")
++    expect(toasts()).toEqual([CREATE_RESTORED])
++  })
++})
++
+ interface FakeAnimation {
+   keyframes: Keyframe[]
+   options: KeyframeAnimationOptions
+diff --git a/apps/web/src/features/todos/todo-edit.test.tsx b/apps/web/src/features/todos/todo-edit.test.tsx
+index 21c8179..4aaf49e 100644
+--- a/apps/web/src/features/todos/todo-edit.test.tsx
++++ b/apps/web/src/features/todos/todo-edit.test.tsx
+@@ -20,6 +20,7 @@ import { TodoList } from "./todo-list"
+ const EDIT_FAILED = "Couldn't save your edit. Please try again."
+ const TOO_LONG = "That todo is too long. The limit is 500 characters."
+ const TOGGLE_FAILED = "Couldn't update that todo. Please try again."
++const DELETE_FAILED = "Couldn't delete that todo. Please try again."
+ 
+ /** A fetch whose response the test releases by hand (flushed in the same act). */
+ const deferredFetch = () => makeDeferredFetch({ flushInSameAct: true })
+@@ -207,6 +208,13 @@ describe("TodoRow: open edit", () => {
+     expect(textarea).toHaveAttribute("rows", "1")
+     expect(textarea).toHaveAttribute("maxLength", "500")
+     expect(textarea).toHaveClass("text-(length:--text-todo-description)")
++    // The design-system focus ring (2 px, 2 px offset, ring colour).
++    expect(textarea).toHaveClass(
++      "focus-visible:outline-2",
++      "focus-visible:outline-offset-2",
++      "focus-visible:outline-ring",
++      "focus-visible:outline-solid"
++    )
+ 
+     const row = rowOf(middle)!
+     expect(row).toContainElement(textarea)
+@@ -557,6 +565,22 @@ describe("TodoRow: edit failure", () => {
+     expect(document.activeElement).not.toBe(document.body)
+   })
+ 
++  it("none open, focus on the list region: it counts as free, the reopened field takes focus", async () => {
++    await renderPopulated()
++    const patch = deferredFetch()
++    await editWithEnter("Middle", "Changed")
++    const region = screen.getByTestId("todo-list-region")
++    await focus(region)
++    expect(region).toHaveFocus()
++
++    await patch.resolve(serverError())
++    await advance(0)
++
++    expect(fieldIn(middle)).toHaveValue("Changed")
++    expect(fieldIn(middle)).toHaveFocus()
++    expect(toasts()).toEqual([EDIT_FAILED])
++  })
++
+   it("another row open: the row shows its confirmed text; persistent Retry toast; Retry resends and announces", async () => {
+     await renderPopulated()
+     const patch = deferredFetch()
+@@ -626,6 +650,18 @@ describe("TodoRow: edit failure", () => {
+     expect(getTodoSync(queryClient).confirmed.get(middle.id)).toBeNull()
+     expect(toasts()).toEqual(["Couldn't save your edit to “Changed”."])
+     expect(retryButton()).toBeInTheDocument()
++    // Focus was on the removed row's Edit button: it goes to the next row.
++    expect(checkbox("Bottom")).toHaveFocus()
++  })
++
++  it("404 on the bottom row: focus goes to the previous row's checkbox", async () => {
++    await renderPopulated()
++    fetchMock.mockResolvedValueOnce(notFound())
++    await editWithEnter("Bottom", "Changed")
++    await advance(0)
++
++    expect(rows()).toEqual(["Top", "Middle"])
++    expect(checkbox("Middle")).toHaveFocus()
+   })
+ 
+   it("too_long, none open: reopened with the too-long copy", async () => {
+@@ -653,11 +689,12 @@ describe("TodoRow: edit failure", () => {
+     expect(retryButton()).toBeInTheDocument()
+   })
+ 
+-  it("edit then delete: the DELETE waits for the PATCH; a failed PATCH drops it with one edit toast", async () => {
++  it("edit then delete: the DELETE waits for the PATCH; a failed PATCH drops it with only the delete toast, no edit reopened", async () => {
+     await renderPopulated()
+     const patch = deferredFetch()
+     await editWithEnter("Middle", "Changed")
+     await click(deleteButton("Changed"))
++    expect(checkbox("Bottom")).toHaveFocus()
+ 
+     expect(callsWith("DELETE")).toHaveLength(0)
+     await patch.resolve(serverError())
+@@ -665,9 +702,50 @@ describe("TodoRow: edit failure", () => {
+     await advance(1)
+ 
+     expect(callsWith("DELETE")).toHaveLength(0)
+-    expect(toasts()).toEqual([EDIT_FAILED])
+-    expect(rows()).toEqual(["Top", "Changed", "Bottom"])
+-    expect(fieldIn(middle)).toHaveValue("Changed")
++    expect(toasts()).toEqual([DELETE_FAILED])
++    expect(rows()).toEqual(["Top", "Middle", "Bottom"])
++    expect(fieldIn(middle)).toBeNull()
++    expect(queryField()).toBeNull()
++    expect(retryButton()).toBeNull()
++    // The delete focus-restore rule: focus was still where the delete moved it.
++    expect(checkbox("Middle")).toHaveFocus()
++  })
++
++  it("edit then delete: a PATCH 404 counts the delete as done, no toast, nothing reopened", async () => {
++    await renderPopulated()
++    const patch = deferredFetch()
++    await editWithEnter("Middle", "Changed")
++    await click(deleteButton("Changed"))
++    expect(checkbox("Bottom")).toHaveFocus()
++
++    await patch.resolve(notFound())
++    await advance(0)
++    await advance(1)
++
++    expect(callsWith("DELETE")).toHaveLength(0)
++    expect(rows()).toEqual(["Top", "Bottom"])
++    expect(toasts()).toEqual([])
++    expect(queryField()).toBeNull()
++    expect(checkbox("Bottom")).toHaveFocus()
++  })
++
++  it("edit then delete while another edit is open: a failed PATCH never touches the open field", async () => {
++    await renderPopulated()
++    const patch = deferredFetch()
++    await editWithEnter("Middle", "Changed")
++    await click(deleteButton("Changed"))
++    await click(editButton("Top"))
++    await type("Typing")
++
++    await patch.resolve(serverError())
++    await advance(0)
++    await advance(1)
++
++    expect(toasts()).toEqual([DELETE_FAILED])
++    expect(fieldIn(top)).toHaveValue("Typing")
++    expect(fieldIn(top)).toHaveFocus()
++    expect(fieldIn(middle)).toBeNull()
++    expect(rows()).toEqual(["Typing", "Middle", "Bottom"])
+   })
+ 
+   it("edit then delete: a successful PATCH is followed by the DELETE", async () => {
+diff --git a/apps/web/src/features/todos/todo-list.tsx b/apps/web/src/features/todos/todo-list.tsx
+index 220b27f..860dc96 100644
+--- a/apps/web/src/features/todos/todo-list.tsx
++++ b/apps/web/src/features/todos/todo-list.tsx
+@@ -9,9 +9,9 @@ import { useQueryClient } from "@tanstack/react-query"
+ import { compareTodos, normalizeDescription, type Todo } from "@todos/shared"
+ 
+ import { useDeleteTodo } from "@/api/hooks/use-delete-todo"
+-import { useEditTodo } from "@/api/hooks/use-edit-todo"
++import { type EditTodoVars, useEditTodo } from "@/api/hooks/use-edit-todo"
+ import { useRetryTodos, useTodosQuery } from "@/api/hooks/use-todos-query"
+-import { useToggleTodo } from "@/api/hooks/use-toggle-todo"
++import { type ToggleTodoVars, useToggleTodo } from "@/api/hooks/use-toggle-todo"
+ import { TODOS_QUERY_KEY } from "@/api/query-client"
+ import { announce } from "@/lib/announce"
+ 
+@@ -21,6 +21,7 @@ import {
+   recordDeleteFocus,
+   registerDeleteFocusController,
+   showDeleteFailure,
++  withDroppedDelete,
+ } from "./delete-failure"
+ import { registerEditController, showEditFailure } from "./edit-failure"
+ import { EmptyState, LoadErrorState, LoadingState } from "./list-states"
+@@ -89,6 +90,41 @@ function pruneExiting(list: readonly Todo[], exiting: ExitingRows) {
+   return kept.size === exiting.size ? exiting : kept
+ }
+ 
++/**
++ * Where focus goes when the row `id` leaves the list (Story 2.3's rule),
++ * from the display order before the removal: the next non-exiting rows,
++ * then the previous ones, nearest first. The first one still rendered takes
++ * focus; none means the Add input.
++ */
++function removalFocusTargets(
++  shown: readonly DisplayedRow[],
++  id: string
++): string[] {
++  const index = shown.findIndex((row) => row.todo.id === id)
++  const live = (row: DisplayedRow) => !row.exiting && row.todo.id !== id
++  return [
++    ...shown.slice(index + 1).filter(live),
++    ...shown.slice(0, Math.max(index, 0)).reverse().filter(live),
++  ].map((row) => row.todo.id)
++}
++
++/** The first target's checkbox still rendered, if any. */
++function firstCheckbox(
++  region: HTMLElement | null,
++  targets: readonly string[]
++): HTMLElement | null {
++  for (const id of targets) {
++    const box = checkboxOf(region, id)
++    if (box) return box
++  }
++  return null
++}
++
++// The failure handlers, stable for the hooks: a delete dropped behind a
++// failed toggle or edit reports the delete's outcome instead.
++const onToggleFailure = withDroppedDelete<ToggleTodoVars>(showToggleFailure)
++const onEditFailure = withDroppedDelete<EditTodoVars>(showEditFailure)
++
+ const EMPTY: readonly Todo[] = []
+ 
+ /** The one open edit field: its row, its starting text, and whether it takes focus. */
+@@ -115,6 +151,9 @@ interface OpenEdit {
+  * else the Add input, and "Todo deleted" is announced. The deleted row stays
+  * as an exiting copy until its exit motion ends (the Empty state waits for
+  * it), or until the id is back in the list (a failed delete's rollback).
++ * Any other removal of a focused row (a `404`, a failed create) moves focus
++ * by the same rule, from the order before the removal. The region is marked
++ * `data-focus-free`: focus on it counts as free for the failure handlers.
+  *
+  * Edit: at most one edit field is open per list. Opening another commits
+  * the open one (its blur saves it first). A save normalizes the text; empty
+@@ -126,9 +165,9 @@ export function TodoList() {
+   const query = useTodosQuery()
+   const queryClient = useQueryClient()
+   const retry = useRetryTodos()
+-  const toggle = useToggleTodo(showToggleFailure)
++  const toggle = useToggleTodo(onToggleFailure)
+   const deleteTodo = useDeleteTodo(showDeleteFailure)
+-  const editTodo = useEditTodo(showEditFailure)
++  const editTodo = useEditTodo(onEditFailure)
+   const regionRef = useRef<HTMLDivElement>(null)
+   const listLoaded = useRef(false)
+   const list = query.data ?? EMPTY
+@@ -163,7 +202,8 @@ export function TodoList() {
+     [setEdit]
+   )
+ 
+-  // The latest render, for the stable delete callback.
++  // The latest render, for the stable delete and removal callbacks (a row's
++  // unmount cleanup still sees the order from before the removal).
+   const latest = useRef({ list, rows })
+   useLayoutEffect(() => {
+     latest.current = { list, rows }
+@@ -171,6 +211,12 @@ export function TodoList() {
+ 
+   // A failed delete's focus restore waits for the restored row to render.
+   const focusRowId = useRef<string | null>(null)
++  // A focused row's removal: the row and its focus targets, resolved after
++  // the commit.
++  const focusRemoval = useRef<{
++    row: HTMLElement
++    targets: string[]
++  } | null>(null)
+   const [, setFocusRequest] = useState(0)
+   useEffect(
+     () =>
+@@ -183,6 +229,20 @@ export function TodoList() {
+     []
+   )
+   useLayoutEffect(() => {
++    const removal = focusRemoval.current
++    focusRemoval.current = null
++    // Only a row really gone (not StrictMode's simulated unmount), and only
++    // while its focus hasn't gone anywhere else.
++    const active = document.activeElement
++    if (
++      removal &&
++      !removal.row.isConnected &&
++      (!active || active === document.body)
++    ) {
++      const box = firstCheckbox(regionRef.current, removal.targets)
++      if (box) box.focus()
++      else focusAddRow()
++    }
+     const id = focusRowId.current
+     if (id === null) return
+     const box = checkboxOf(regionRef.current, id)
+@@ -215,16 +275,10 @@ export function TodoList() {
+   const handleDelete = useCallback(
+     (todo: Todo) => {
+       const { list: from, rows: shown } = latest.current
+-      const index = shown.findIndex((row) => row.todo.id === todo.id)
+-      const target =
+-        shown.slice(index + 1).find((row) => !row.exiting) ??
+-        shown
+-          .slice(0, Math.max(index, 0))
+-          .reverse()
+-          .find((row) => !row.exiting)
+-      const targetBox = target
+-        ? checkboxOf(regionRef.current, target.todo.id)
+-        : null
++      const targetBox = firstCheckbox(
++        regionRef.current,
++        removalFocusTargets(shown, todo.id)
++      )
+ 
+       setExiting((current) =>
+         new Map(current).set(todo.id, { todo, from, done: false })
+@@ -239,6 +293,16 @@ export function TodoList() {
+     [deleteTodo]
+   )
+ 
++  // A focused, non-exiting row left the list (a `404`, a failed create, or a
++  // reload without it): focus moves by the delete rule, after the commit.
++  const handleFocusedRemoval = useCallback((id: string, row: HTMLElement) => {
++    focusRemoval.current = {
++      row,
++      targets: removalFocusTargets(latest.current.rows, id),
++    }
++    setFocusRequest((n) => n + 1)
++  }, [])
++
+   const closeEdit = useCallback(
+     (id: string) => {
+       if (openEdit.current?.id === id) setOpenEdit(null)
+@@ -300,7 +364,12 @@ export function TodoList() {
+   return (
+     <>
+       <AddRow status={query.status} />
+-      <div ref={regionRef} tabIndex={-1} data-testid="todo-list-region">
++      <div
++        ref={regionRef}
++        tabIndex={-1}
++        data-testid="todo-list-region"
++        data-focus-free=""
++      >
+         <RowEntranceContext value={listLoaded}>
+           <ListState
+             status={query.status}
+@@ -314,6 +383,7 @@ export function TodoList() {
+             onCancelEdit={closeEdit}
+             onDraft={handleDraft}
+             onExitDone={handleExitDone}
++            onFocusedRemoval={handleFocusedRemoval}
+           />
+         </RowEntranceContext>
+       </div>
+@@ -352,6 +422,7 @@ function ListState({
+   onCancelEdit,
+   onDraft,
+   onExitDone,
++  onFocusedRemoval,
+ }: {
+   status: ReturnType<typeof useTodosQuery>["status"]
+   rows: readonly DisplayedRow[]
+@@ -364,6 +435,7 @@ function ListState({
+   onCancelEdit: (id: string) => void
+   onDraft: (text: string) => void
+   onExitDone: (id: string) => void
++  onFocusedRemoval: (id: string, row: HTMLElement) => void
+ }) {
+   if (status === "pending") return <LoadingState />
+   if (status === "error") return <LoadErrorState onRetry={onRetry} />
+@@ -388,6 +460,7 @@ function ListState({
+             onCancelEdit={onCancelEdit}
+             onDraft={onDraft}
+             onExitDone={onExitDone}
++            onFocusedRemoval={onFocusedRemoval}
+           />
+         )
+       })}
+diff --git a/apps/web/src/features/todos/todo-row.test.tsx b/apps/web/src/features/todos/todo-row.test.tsx
+index 536ed75..6b9e560 100644
+--- a/apps/web/src/features/todos/todo-row.test.tsx
++++ b/apps/web/src/features/todos/todo-row.test.tsx
+@@ -292,7 +292,7 @@ describe("TodoRow: toggle failure", () => {
+     expectActive("Older")
+   })
+ 
+-  it("PATCH 404: the Todo is gone, so the row is removed, with one toggle toast", async () => {
++  it("PATCH 404: the Todo is gone, so the row is removed, with one toggle toast; focus moves to the previous row", async () => {
+     const { queryClient } = await renderPopulated()
+     fetchMock.mockResolvedValueOnce(
+       jsonResponse(
+@@ -301,6 +301,7 @@ describe("TodoRow: toggle failure", () => {
+       )
+     )
+ 
++    act(() => checkbox("Older").focus())
+     await click(checkbox("Older"))
+     await advance(0)
+ 
+@@ -308,6 +309,8 @@ describe("TodoRow: toggle failure", () => {
+     expect(rows()).toEqual(["Newer"])
+     expect(toasts()).toEqual([TOGGLE_FAILED])
+     expect(getTodoSync(queryClient).confirmed.get(older.id)).toBeNull()
++    // The removed row held focus: it goes to the previous row's checkbox.
++    expect(checkbox("Newer")).toHaveFocus()
+   })
+ 
+   it("a toggle on a pending create is dropped when the create fails: only the create failure shows", async () => {
+@@ -321,6 +324,7 @@ describe("TodoRow: toggle failure", () => {
+     })
+     expect(rows()).toEqual(["Brand new", "Newer", "Older"])
+ 
++    act(() => checkbox("Brand new").focus())
+     await click(checkbox("Brand new"))
+     expectCompleted("Brand new")
+ 
+@@ -330,6 +334,8 @@ describe("TodoRow: toggle failure", () => {
+     expect(patches()).toEqual([])
+     expect(rows()).toEqual(["Newer", "Older"])
+     expect(toasts()).toEqual([CREATE_RESTORED])
++    // The removed pending row held focus: it goes to the next row's checkbox.
++    expect(checkbox("Newer")).toHaveFocus()
+   })
+ })
+ 
+diff --git a/apps/web/src/features/todos/todo-row.tsx b/apps/web/src/features/todos/todo-row.tsx
+index bcf07d6..466b98e 100644
+--- a/apps/web/src/features/todos/todo-row.tsx
++++ b/apps/web/src/features/todos/todo-row.tsx
+@@ -52,7 +52,9 @@ import { animateRowExit } from "./row-exit"
+  * Todo looks exactly like a confirmed one. An `exiting` row (deleted, kept
+  * only for its exit motion) is `inert`, never editing, fades then collapses,
+  * and reports `onExitDone(id)`; if it stops exiting (a rollback), the motion
+- * is undone.
++ * is undone. A non-exiting row that unmounts while focus is inside it
++ * reports `onFocusedRemoval(id, li)` (its layout cleanup runs while it is
++ * still in the DOM), so the list can move focus once the `li` is gone.
+  */
+ export const TodoRow = memo(function TodoRow({
+   todo,
+@@ -67,6 +69,7 @@ export const TodoRow = memo(function TodoRow({
+   editAutoFocus = true,
+   exiting = false,
+   onExitDone,
++  onFocusedRemoval,
+ }: {
+   todo: Todo
+   onToggle: (vars: ToggleTodoVars) => void
+@@ -84,6 +87,11 @@ export const TodoRow = memo(function TodoRow({
+   editAutoFocus?: boolean
+   exiting?: boolean
+   onExitDone: (id: string) => void
++  /**
++   * This row's effects were torn down, not exiting, with focus inside it
++   * (an unmount, or StrictMode's simulated one: the `li` then stays).
++   */
++  onFocusedRemoval?: (id: string, row: HTMLElement) => void
+ }) {
+   const rowRef = useRef<HTMLLIElement>(null)
+   const editButtonRef = useRef<HTMLButtonElement>(null)
+@@ -101,6 +109,21 @@ export const TodoRow = memo(function TodoRow({
+     return animateRowExit(rowRef.current, () => onExitDone(id))
+   }, [exiting, id, onExitDone])
+ 
++  // The latest props, for the unmount cleanup below.
++  const removal = useRef({ exiting, onFocusedRemoval })
++  useLayoutEffect(() => {
++    removal.current = { exiting, onFocusedRemoval }
++  })
++  useLayoutEffect(() => {
++    const row = rowRef.current
++    return () => {
++      const { exiting: wasExiting, onFocusedRemoval: report } = removal.current
++      if (!wasExiting && row?.contains(document.activeElement)) {
++        report?.(id, row)
++      }
++    }
++  }, [id])
++
+   function handleCheckedChange(checked: boolean | "indeterminate") {
+     const completed = checked === true
+     onToggle({ id: todo.id, completed })

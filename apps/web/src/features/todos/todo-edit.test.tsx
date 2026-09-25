@@ -20,6 +20,7 @@ import { TodoList } from "./todo-list"
 const EDIT_FAILED = "Couldn't save your edit. Please try again."
 const TOO_LONG = "That todo is too long. The limit is 500 characters."
 const TOGGLE_FAILED = "Couldn't update that todo. Please try again."
+const DELETE_FAILED = "Couldn't delete that todo. Please try again."
 
 /** A fetch whose response the test releases by hand (flushed in the same act). */
 const deferredFetch = () => makeDeferredFetch({ flushInSameAct: true })
@@ -207,6 +208,13 @@ describe("TodoRow: open edit", () => {
     expect(textarea).toHaveAttribute("rows", "1")
     expect(textarea).toHaveAttribute("maxLength", "500")
     expect(textarea).toHaveClass("text-(length:--text-todo-description)")
+    // The design-system focus ring (2 px, 2 px offset, ring colour).
+    expect(textarea).toHaveClass(
+      "focus-visible:outline-2",
+      "focus-visible:outline-offset-2",
+      "focus-visible:outline-ring",
+      "focus-visible:outline-solid"
+    )
 
     const row = rowOf(middle)!
     expect(row).toContainElement(textarea)
@@ -557,6 +565,22 @@ describe("TodoRow: edit failure", () => {
     expect(document.activeElement).not.toBe(document.body)
   })
 
+  it("none open, focus on the list region: it counts as free, the reopened field takes focus", async () => {
+    await renderPopulated()
+    const patch = deferredFetch()
+    await editWithEnter("Middle", "Changed")
+    const region = screen.getByTestId("todo-list-region")
+    await focus(region)
+    expect(region).toHaveFocus()
+
+    await patch.resolve(serverError())
+    await advance(0)
+
+    expect(fieldIn(middle)).toHaveValue("Changed")
+    expect(fieldIn(middle)).toHaveFocus()
+    expect(toasts()).toEqual([EDIT_FAILED])
+  })
+
   it("another row open: the row shows its confirmed text; persistent Retry toast; Retry resends and announces", async () => {
     await renderPopulated()
     const patch = deferredFetch()
@@ -626,6 +650,18 @@ describe("TodoRow: edit failure", () => {
     expect(getTodoSync(queryClient).confirmed.get(middle.id)).toBeNull()
     expect(toasts()).toEqual(["Couldn't save your edit to “Changed”."])
     expect(retryButton()).toBeInTheDocument()
+    // Focus was on the removed row's Edit button: it goes to the next row.
+    expect(checkbox("Bottom")).toHaveFocus()
+  })
+
+  it("404 on the bottom row: focus goes to the previous row's checkbox", async () => {
+    await renderPopulated()
+    fetchMock.mockResolvedValueOnce(notFound())
+    await editWithEnter("Bottom", "Changed")
+    await advance(0)
+
+    expect(rows()).toEqual(["Top", "Middle"])
+    expect(checkbox("Middle")).toHaveFocus()
   })
 
   it("too_long, none open: reopened with the too-long copy", async () => {
@@ -653,11 +689,12 @@ describe("TodoRow: edit failure", () => {
     expect(retryButton()).toBeInTheDocument()
   })
 
-  it("edit then delete: the DELETE waits for the PATCH; a failed PATCH drops it with one edit toast", async () => {
+  it("edit then delete: the DELETE waits for the PATCH; a failed PATCH drops it with only the delete toast, no edit reopened", async () => {
     await renderPopulated()
     const patch = deferredFetch()
     await editWithEnter("Middle", "Changed")
     await click(deleteButton("Changed"))
+    expect(checkbox("Bottom")).toHaveFocus()
 
     expect(callsWith("DELETE")).toHaveLength(0)
     await patch.resolve(serverError())
@@ -665,9 +702,50 @@ describe("TodoRow: edit failure", () => {
     await advance(1)
 
     expect(callsWith("DELETE")).toHaveLength(0)
-    expect(toasts()).toEqual([EDIT_FAILED])
-    expect(rows()).toEqual(["Top", "Changed", "Bottom"])
-    expect(fieldIn(middle)).toHaveValue("Changed")
+    expect(toasts()).toEqual([DELETE_FAILED])
+    expect(rows()).toEqual(["Top", "Middle", "Bottom"])
+    expect(fieldIn(middle)).toBeNull()
+    expect(queryField()).toBeNull()
+    expect(retryButton()).toBeNull()
+    // The delete focus-restore rule: focus was still where the delete moved it.
+    expect(checkbox("Middle")).toHaveFocus()
+  })
+
+  it("edit then delete: a PATCH 404 counts the delete as done, no toast, nothing reopened", async () => {
+    await renderPopulated()
+    const patch = deferredFetch()
+    await editWithEnter("Middle", "Changed")
+    await click(deleteButton("Changed"))
+    expect(checkbox("Bottom")).toHaveFocus()
+
+    await patch.resolve(notFound())
+    await advance(0)
+    await advance(1)
+
+    expect(callsWith("DELETE")).toHaveLength(0)
+    expect(rows()).toEqual(["Top", "Bottom"])
+    expect(toasts()).toEqual([])
+    expect(queryField()).toBeNull()
+    expect(checkbox("Bottom")).toHaveFocus()
+  })
+
+  it("edit then delete while another edit is open: a failed PATCH never touches the open field", async () => {
+    await renderPopulated()
+    const patch = deferredFetch()
+    await editWithEnter("Middle", "Changed")
+    await click(deleteButton("Changed"))
+    await click(editButton("Top"))
+    await type("Typing")
+
+    await patch.resolve(serverError())
+    await advance(0)
+    await advance(1)
+
+    expect(toasts()).toEqual([DELETE_FAILED])
+    expect(fieldIn(top)).toHaveValue("Typing")
+    expect(fieldIn(top)).toHaveFocus()
+    expect(fieldIn(middle)).toBeNull()
+    expect(rows()).toEqual(["Typing", "Middle", "Bottom"])
   })
 
   it("edit then delete: a successful PATCH is followed by the DELETE", async () => {

@@ -412,6 +412,23 @@ describe("Add row: failed create, input empty", () => {
     await renderPopulated()
     const post = deferredFetch()
     await add("Buy milk")
+    const elsewhere = screen.getByRole("checkbox", { name: "Existing" })
+    await act(async () => {
+      elsewhere.focus()
+    })
+
+    await post.resolve(
+      jsonResponse({ error: { code: "INTERNAL", message: "x" } }, 500)
+    )
+    expect(input()).toHaveValue("Buy milk")
+    expect(elsewhere).toHaveFocus()
+    expect(toasts()).toEqual([RESTORED])
+  })
+
+  it("moves focus to the input from the list region (free focus, like <body>)", async () => {
+    await renderPopulated()
+    const post = deferredFetch()
+    await add("Buy milk")
     const region = screen.getByTestId("todo-list-region")
     await act(async () => {
       region.focus()
@@ -421,7 +438,7 @@ describe("Add row: failed create, input empty", () => {
       jsonResponse({ error: { code: "INTERNAL", message: "x" } }, 500)
     )
     expect(input()).toHaveValue("Buy milk")
-    expect(region).toHaveFocus()
+    expect(input()).toHaveFocus()
     expect(toasts()).toEqual([RESTORED])
   })
 })

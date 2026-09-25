@@ -292,7 +292,7 @@ describe("TodoRow: toggle failure", () => {
     expectActive("Older")
   })
 
-  it("PATCH 404: the Todo is gone, so the row is removed, with one toggle toast", async () => {
+  it("PATCH 404: the Todo is gone, so the row is removed, with one toggle toast; focus moves to the previous row", async () => {
     const { queryClient } = await renderPopulated()
     fetchMock.mockResolvedValueOnce(
       jsonResponse(
@@ -301,6 +301,7 @@ describe("TodoRow: toggle failure", () => {
       )
     )
 
+    act(() => checkbox("Older").focus())
     await click(checkbox("Older"))
     await advance(0)
 
@@ -308,6 +309,8 @@ describe("TodoRow: toggle failure", () => {
     expect(rows()).toEqual(["Newer"])
     expect(toasts()).toEqual([TOGGLE_FAILED])
     expect(getTodoSync(queryClient).confirmed.get(older.id)).toBeNull()
+    // The removed row held focus: it goes to the previous row's checkbox.
+    expect(checkbox("Newer")).toHaveFocus()
   })
 
   it("a toggle on a pending create is dropped when the create fails: only the create failure shows", async () => {
@@ -321,6 +324,7 @@ describe("TodoRow: toggle failure", () => {
     })
     expect(rows()).toEqual(["Brand new", "Newer", "Older"])
 
+    act(() => checkbox("Brand new").focus())
     await click(checkbox("Brand new"))
     expectCompleted("Brand new")
 
@@ -330,6 +334,8 @@ describe("TodoRow: toggle failure", () => {
     expect(patches()).toEqual([])
     expect(rows()).toEqual(["Newer", "Older"])
     expect(toasts()).toEqual([CREATE_RESTORED])
+    // The removed pending row held focus: it goes to the next row's checkbox.
+    expect(checkbox("Newer")).toHaveFocus()
   })
 })
 
