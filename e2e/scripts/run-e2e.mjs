@@ -12,6 +12,10 @@
 // 3. Runs `playwright test` with the stack and server in the environment.
 // 4. Always tears down: removes the server container, then `down -v` for
 //    `todos-e2e` only. Exits with Playwright's exit code.
+//
+// Images are built as `todos-*:e2e` (TODOS_IMAGE_TAG), so the owner's
+// `todos-*:prod` images are never rebuilt. Needs `.env` (or the POSTGRES_*
+// values exported); exits at once without them.
 
 import { execFile, spawn } from "node:child_process"
 import { randomBytes } from "node:crypto"
@@ -21,11 +25,22 @@ import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 
+import { envPreflight } from "../../scripts/lib/env-preflight.mjs"
+
 const run = promisify(execFile)
 
 const E2E_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const ROOT = resolve(E2E_DIR, "..")
 const PROJECT = "todos-e2e"
+const IMAGE_TAG = "e2e"
+
+// Preflight: exit at once, before Compose fails on POSTGRES_*.
+try {
+  envPreflight(ROOT, process.env)
+} catch (err) {
+  console.error(`run-e2e: ${err instanceof Error ? err.message : String(err)}`)
+  process.exit(1)
+}
 // The installed runner's version, so the run-server image and npx match it.
 const PLAYWRIGHT_VERSION = JSON.parse(
   readFileSync(
@@ -36,9 +51,15 @@ const PLAYWRIGHT_VERSION = JSON.parse(
 const IMAGE = `mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble`
 const SERVER_NAME = `todos-e2e-pw-${process.pid}-${randomBytes(3).toString("hex")}`
 
+/** @param {string} msg */
 const log = (msg) => console.log(`run-e2e: ${msg}`)
 
-/** Whether `port` can be bound on `host`. */
+/**
+ * Whether `port` can be bound on `host`.
+ * @param {number} port
+ * @param {string} host
+ * @returns {Promise<boolean>}
+ */
 function canBind(port, host) {
   return new Promise((done) => {
     const server = createServer()
@@ -47,7 +68,11 @@ function canBind(port, host) {
   })
 }
 
-/** The first port from `start` that can be bound on all interfaces. */
+/**
+ * The first port from `start` that can be bound on all interfaces.
+ * @param {number} start
+ * @returns {Promise<number>}
+ */
 async function firstFreePort(start) {
   for (let port = start; port < start + 100; port++) {
     if (await canBind(port, "0.0.0.0")) return port
@@ -55,7 +80,11 @@ async function firstFreePort(start) {
   throw new Error(`no free port in ${start}-${start + 99}`)
 }
 
-/** Resolves once something accepts TCP connections on 127.0.0.1:`port`. */
+/**
+ * Whether something accepts TCP connections on 127.0.0.1:`port`.
+ * @param {number} port
+ * @returns {Promise<boolean>}
+ */
 function tcpOpen(port) {
   return new Promise((done) => {
     const socket = connect({ port, host: "127.0.0.1" })
@@ -72,6 +101,7 @@ function tcpOpen(port) {
   })
 }
 
+/** @param {number} ms */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const WEB_PORT = String(
@@ -79,11 +109,19 @@ const WEB_PORT = String(
 )
 let WS_PORT = await firstFreePort(18380)
 if (String(WS_PORT) === WEB_PORT) WS_PORT = await firstFreePort(WS_PORT + 1)
-// WEB_PORT from here wins over `.env`'s value (the user's stack may hold it).
-const ENV = { ...process.env, WEB_PORT }
+// WEB_PORT from here wins over `.env`'s value (the user's stack may hold it),
+// and TODOS_IMAGE_TAG keeps the build off the owner's `:prod` tags.
+const ENV = { ...process.env, WEB_PORT, TODOS_IMAGE_TAG: IMAGE_TAG }
 
+/**
+ * `docker compose` for the isolated e2e project only, output inherited.
+ * @param {string[]} args
+ * @param {{ timeout?: number }} [options]
+ * @returns {Promise<void>}
+ */
 async function compose(args, { timeout = 900_000 } = {}) {
-  await new Promise((done, fail) => {
+  /** @type {Promise<void>} */
+  const exited = new Promise((done, fail) => {
     const child = spawn(
       "docker",
       ["compose", "-p", PROJECT, "-f", "compose.yaml", ...args],
@@ -102,8 +140,14 @@ async function compose(args, { timeout = 900_000 } = {}) {
         )
     })
   })
+  await exited
 }
 
+/**
+ * @param {string[]} args
+ * @param {{ timeout?: number }} [options]
+ * @returns {Promise<string>}
+ */
 async function docker(args, { timeout = 120_000 } = {}) {
   const { stdout } = await run("docker", args, {
     cwd: ROOT,
@@ -158,18 +202,22 @@ async function startServer() {
   }
 }
 
-/** Polls the stack's health through nginx until 200 (web has no healthcheck). */
+/**
+ * Polls the stack's health through nginx until 200 (web has no healthcheck).
+ * @param {number} [timeoutMs]
+ */
 async function waitForWeb(timeoutMs = 120_000) {
   const url = `http://127.0.0.1:${WEB_PORT}/api/v1/health`
   const deadline = Date.now() + timeoutMs
-  let last = "no response"
+  /** @type {string | undefined} */
+  let last
   for (;;) {
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(5_000) })
       if (res.status === 200) return
       last = `status ${res.status}`
     } catch (err) {
-      last = err.message
+      last = err instanceof Error ? err.message : String(err)
     }
     if (Date.now() > deadline) {
       throw new Error(
@@ -216,9 +264,33 @@ async function teardown() {
   return ok
 }
 
+/** The owner's image tags, which the e2e run must never rebuild. */
+const OWNER_IMAGES = [
+  "todos-api:prod",
+  "todos-web:prod",
+  "todos-api:dev",
+  "todos-web:dev",
+]
+
+/**
+ * The image ID for each owner tag, or "(absent)".
+ * @returns {Promise<Record<string, string>>}
+ */
+async function ownerImageIds() {
+  /** @type {Record<string, string>} */
+  const ids = {}
+  for (const tag of OWNER_IMAGES) {
+    ids[tag] = await docker(["image", "inspect", "-f", "{{.Id}}", tag]).catch(
+      () => "(absent)"
+    )
+  }
+  return ids
+}
+
+/** @type {import("node:child_process").ChildProcess | undefined} */
 let child
 let interrupted = false
-for (const signal of ["SIGINT", "SIGTERM"]) {
+for (const signal of /** @type {NodeJS.Signals[]} */ (["SIGINT", "SIGTERM"])) {
   process.on(signal, () => {
     interrupted = true
     // Playwright stops, then the normal path below tears down. Ctrl+C already
@@ -227,6 +299,8 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
     if (child && signal !== "SIGINT") child.kill(signal)
   })
 }
+
+const ownerImagesBefore = await ownerImageIds()
 
 let exitCode = 1
 try {
@@ -260,6 +334,7 @@ try {
           E2E_WS_ENDPOINT: `ws://127.0.0.1:${WS_PORT}/`,
           E2E_COMPOSE_PROJECT: PROJECT,
           E2E_WEB_PORT: WEB_PORT,
+          E2E_IMAGE_TAG: IMAGE_TAG,
           E2E_REPO_ROOT: ROOT,
         },
       }
@@ -268,9 +343,19 @@ try {
     child.once("exit", (code, signal) => done(code ?? (signal ? 1 : 0)))
   })
 } catch (err) {
-  console.error(`run-e2e: ${err.message}`)
+  console.error(`run-e2e: ${err instanceof Error ? err.message : String(err)}`)
   exitCode = 1
 } finally {
   if (!(await teardown()) && exitCode === 0) exitCode = 1
+  const ownerImagesAfter = await ownerImageIds()
+  const changed = OWNER_IMAGES.filter(
+    (tag) => ownerImagesAfter[tag] !== ownerImagesBefore[tag]
+  )
+  if (changed.length > 0) {
+    console.error(
+      `run-e2e: the owner's images changed during the run: ${changed.join(", ")}`
+    )
+    exitCode = 1
+  }
 }
 process.exit(exitCode)

@@ -292,9 +292,10 @@ const execFileP = promisify(execFile)
 export async function apiLogLines(): Promise<ApiLogLine[]> {
   const project = process.env.E2E_COMPOSE_PROJECT
   const webPort = process.env.E2E_WEB_PORT
-  if (!project || !webPort) {
+  const imageTag = process.env.E2E_IMAGE_TAG
+  if (!project || !webPort || !imageTag) {
     throw new Error(
-      "E2E_COMPOSE_PROJECT and E2E_WEB_PORT must be set: run via pnpm test:e2e"
+      "E2E_COMPOSE_PROJECT, E2E_WEB_PORT and E2E_IMAGE_TAG must be set: run via pnpm test:e2e"
     )
   }
   if (!project.startsWith("todos-e2e")) {
@@ -314,8 +315,9 @@ export async function apiLogLines(): Promise<ApiLogLine[]> {
     ],
     {
       cwd: process.env.E2E_REPO_ROOT ?? "..",
-      // Unset, Compose would fall back to `.env`'s WEB_PORT.
-      env: { ...process.env, WEB_PORT: webPort },
+      // Unset, Compose would fall back to `.env`'s WEB_PORT and the `:prod`
+      // image tags.
+      env: { ...process.env, WEB_PORT: webPort, TODOS_IMAGE_TAG: imageTag },
       timeout: 60_000,
       maxBuffer: 256 * 1024 * 1024,
     }
