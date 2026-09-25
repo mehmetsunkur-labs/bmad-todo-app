@@ -81,7 +81,7 @@ export default defineConfig([
     },
   },
   {
-    files: ["packages/shared/**/*.ts"],
+    files: ["packages/shared/src/**/*.ts"],
     rules: {
       "no-restricted-imports": [
         "error",

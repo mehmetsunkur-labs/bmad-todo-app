@@ -1,4 +1,3 @@
-import { ErrorEnvelopeSchema, HealthResponseSchema } from "@todos/shared"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { createTestApp, type TestApp } from "./helpers"
@@ -14,8 +13,8 @@ describe("GET /api/v1/health", () => {
     it("returns 200 {status: ok}", async () => {
       const res = await t.app.inject({ method: "GET", url: "/api/v1/health" })
       expect(res.statusCode).toBe(200)
+      expect(res.headers["content-type"]).toMatch(/^application\/json/)
       expect(res.json()).toEqual({ status: "ok" })
-      expect(HealthResponseSchema.parse(res.json())).toEqual({ status: "ok" })
     })
   })
 
@@ -32,9 +31,13 @@ describe("GET /api/v1/health", () => {
     it("returns 503 UNAVAILABLE in the error envelope", async () => {
       const res = await t.app.inject({ method: "GET", url: "/api/v1/health" })
       expect(res.statusCode).toBe(503)
-      const body = ErrorEnvelopeSchema.parse(res.json())
-      expect(body.error.code).toBe("UNAVAILABLE")
-      expect(body.error.message).toEqual(expect.any(String))
+      expect(res.headers["content-type"]).toMatch(/^application\/json/)
+      expect(res.json()).toEqual({
+        error: {
+          code: "UNAVAILABLE",
+          message: "The database is unreachable.",
+        },
+      })
     })
 
     it("keeps serving later requests", async () => {
@@ -47,6 +50,12 @@ describe("GET /api/v1/health", () => {
       expect(second.statusCode).toBe(503)
       const notFound = await t.app.inject({ method: "GET", url: "/api/v1/x" })
       expect(notFound.statusCode).toBe(404)
+      expect(notFound.json()).toEqual({
+        error: {
+          code: "NOT_FOUND",
+          message: "The requested resource was not found.",
+        },
+      })
     })
   })
 })

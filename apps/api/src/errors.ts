@@ -85,6 +85,64 @@ function toDetails(issues: ValidationIssue[]): ErrorDetail[] {
   })
 }
 
+// Socket-level codes for a database that cannot be reached at all (refused,
+// timed out, reset, host unresolvable or unroutable).
+const UNREACHABLE_SOCKET_CODES = new Set([
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+])
+
+// pg / pg-pool raise these as plain, code-less Errors: a connection that
+// can't be made in time (`connectionTimeoutMillis`), a query that outlives
+// `query_timeout`, or a connection that drops mid-use.
+const UNREACHABLE_MESSAGES = new Set([
+  "timeout exceeded when trying to connect",
+  "Connection terminated due to connection timeout",
+  "Query read timeout",
+  "Connection terminated unexpectedly",
+])
+
+// PostgreSQL SQLSTATEs that mean the server is gone or refusing work:
+// class 08 (connection exception) and 57P01–57P03 (admin/crash shutdown,
+// cannot connect now).
+const UNAVAILABLE_SQLSTATES = new Set(["57P01", "57P02", "57P03"])
+
+function isUnreachableError(error: object): boolean {
+  const { code, message } = error as { code?: unknown; message?: unknown }
+  if (typeof code === "string") {
+    if (UNREACHABLE_SOCKET_CODES.has(code)) return true
+    if (/^08[0-9A-Z]{3}$/.test(code) || UNAVAILABLE_SQLSTATES.has(code)) {
+      return true
+    }
+  }
+  return typeof message === "string" && UNREACHABLE_MESSAGES.has(message)
+}
+
+/**
+ * True when `error` (or anything in its `cause` chain, or an AggregateError
+ * member) says the database is unreachable (AD-5 → 503 UNAVAILABLE). Drizzle
+ * wraps driver errors in `DrizzleQueryError` with the pg error as `cause`.
+ */
+export function isDatabaseUnavailable(error: unknown): boolean {
+  const queue: unknown[] = [error]
+  const seen = new Set<unknown>()
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (typeof current !== "object" || current === null) continue
+    if (seen.has(current) || seen.size > 20) continue
+    seen.add(current)
+    if (isUnreachableError(current)) return true
+    queue.push((current as { cause?: unknown }).cause)
+    if (current instanceof AggregateError) queue.push(...current.errors)
+  }
+  return false
+}
+
 /** Maps anything thrown during a request to an AppError. */
 function toAppError(error: unknown): AppError | undefined {
   if (error instanceof AppError) return error
@@ -92,6 +150,12 @@ function toAppError(error: unknown): AppError | undefined {
   if (fastifyError?.validation?.length) {
     return new AppError("VALIDATION_ERROR", {
       details: toDetails(fastifyError.validation),
+      cause: error,
+    })
+  }
+  if (isDatabaseUnavailable(error)) {
+    return new AppError("UNAVAILABLE", {
+      message: "The database is unreachable.",
       cause: error,
     })
   }

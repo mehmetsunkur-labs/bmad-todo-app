@@ -18,15 +18,18 @@ export const ErrorReasonSchema = z.enum([
 ])
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>
 
-export const ErrorDetailSchema = z.strictObject({
+export const ErrorDetailSchema = z.object({
   field: z.string(),
   reason: ErrorReasonSchema,
 })
 export type ErrorDetail = z.infer<typeof ErrorDetailSchema>
 
-/** The body of every non-2xx API response. */
-export const ErrorEnvelopeSchema = z.strictObject({
-  error: z.strictObject({
+/**
+ * The body of every non-2xx API response. A response schema, so unknown keys
+ * are stripped rather than rejected (AD-2).
+ */
+export const ErrorEnvelopeSchema = z.object({
+  error: z.object({
     code: ErrorCodeSchema,
     message: z.string(),
     details: z.array(ErrorDetailSchema).optional(),

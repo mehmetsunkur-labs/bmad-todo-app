@@ -18,12 +18,20 @@ function testDatabaseUrl(): string {
   return url.toString()
 }
 
+// Also set on this process, so the global setup (which runs here, not in a
+// test worker) sees the same database as the tests.
+process.env.TEST_DATABASE_URL = testDatabaseUrl()
+
 export default defineConfig({
   test: {
     environment: "node",
     include: ["test/**/*.test.ts"],
+    globalSetup: ["./test/global-setup.ts"],
+    // Every file shares the one `todos_test` database, and todos.test.ts
+    // truncates it, so files run one at a time.
+    fileParallelism: false,
     env: {
-      TEST_DATABASE_URL: testDatabaseUrl(),
+      TEST_DATABASE_URL: process.env.TEST_DATABASE_URL,
     },
     testTimeout: 20_000,
     hookTimeout: 20_000,

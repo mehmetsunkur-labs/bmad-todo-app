@@ -15,7 +15,9 @@ import {
 import { createLogController, registerRequestLogging } from "./logger"
 import { createRepositories } from "./repositories"
 import { healthRoutes } from "./routes/health"
+import { todoRoutes } from "./routes/todos"
 import { createHealthService } from "./services/health-service"
+import { createTodoService } from "./services/todo-service"
 
 export interface BuildAppOptions {
   pool: pg.Pool
@@ -48,8 +50,12 @@ export function buildApp({ pool, logger }: BuildAppOptions): FastifyInstance {
   const healthService = createHealthService({
     healthRepository: repositories.health,
   })
+  const todoService = createTodoService({
+    todoRepository: repositories.todos,
+  })
 
   app.register(healthRoutes({ healthService }))
+  app.register(todoRoutes({ todoService }))
 
   return app
 }

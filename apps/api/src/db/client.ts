@@ -33,5 +33,5 @@ export function createPool(
 }
 
 export function createDb(pool: pg.Pool): Db {
-  return drizzle(pool, { schema })
+  return drizzle(pool, { schema, casing: "snake_case" })
 }
