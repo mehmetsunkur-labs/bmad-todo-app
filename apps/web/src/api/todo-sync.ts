@@ -14,7 +14,8 @@ export type TodoWriteKind = "create" | "edit" | "toggle" | "delete"
 /**
  * An optimistic operation not yet confirmed by the server. `apply` derives
  * the rendered Todo from the state before it (`null` = no Todo). Story 1.4
- * defines the create op, Story 2.2 the toggle op; edit and delete follow.
+ * defines the create op, Story 2.2 the toggle op, Story 2.3 the delete op;
+ * edit follows.
  */
 export interface PendingOp {
   readonly kind: TodoWriteKind
@@ -109,6 +110,14 @@ export function toggleOp(completed: boolean): PendingOp {
     kind: "toggle",
     apply: (previous) => previous && { ...previous, completed },
   }
+}
+
+/**
+ * The optimistic delete: no Todo, whatever came before. The row leaves the
+ * list at once; a failure re-renders it from `confirmed`.
+ */
+export function deleteOp(): PendingOp {
+  return { kind: "delete", apply: () => null }
 }
 
 /** A Todo's rendered state: `confirmed` with its `pending` ops applied in order. */

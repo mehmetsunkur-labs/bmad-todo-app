@@ -45,11 +45,15 @@ interface ResponseSchema<T> {
   ): { success: true; data: T } | { success: false; error: unknown }
 }
 
-interface RequestOptions<T> {
+interface RequestOptions<S> {
   method?: "GET" | "POST" | "PATCH" | "DELETE"
   body?: unknown
-  /** Schema for the success body; ignored for `204`, which is never parsed. */
-  schema: ResponseSchema<T>
+  /**
+   * Schema for the success body, or `null` when no body is expected: any
+   * 2xx (`204` included) then resolves `null` without parsing. A `204` on a
+   * call with a schema is `INTERNAL` (a body was expected).
+   */
+  schema: S
   /** An extra abort signal (for example TanStack Query's), combined with the timeout. */
   signal?: AbortSignal
 }
@@ -66,10 +70,23 @@ function isAbort(error: unknown): boolean {
  * `REQUEST_TIMEOUT_MS`, and every response is validated with the shared
  * schemas before it is returned.
  */
+export function request<T>(
+  path: string,
+  options: RequestOptions<ResponseSchema<T>>
+): Promise<T>
+export function request(
+  path: string,
+  options: RequestOptions<null>
+): Promise<null>
 export async function request<T>(
   path: string,
-  { method = "GET", body, schema, signal }: RequestOptions<T>
-): Promise<T> {
+  {
+    method = "GET",
+    body,
+    schema,
+    signal,
+  }: RequestOptions<ResponseSchema<T> | null>
+): Promise<T | null> {
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
   const hasBody = body !== undefined
@@ -88,7 +105,11 @@ export async function request<T>(
     throw new HttpError("NETWORK", { cause })
   }
 
-  if (response.status === 204) return undefined as T
+  // A `204` is never parsed: `null` when no body is expected, else INTERNAL.
+  if (schema === null && response.ok) return null
+  if (response.status === 204) {
+    throw new HttpError("INTERNAL", { status: response.status })
+  }
 
   let json: unknown
   try {
@@ -116,7 +137,8 @@ export async function request<T>(
     })
   }
 
-  const parsed = schema.safeParse(json)
+  // Only an ok response gets here, and an ok call without a schema returned above.
+  const parsed = schema!.safeParse(json)
   if (!parsed.success) {
     throw new HttpError("INTERNAL", {
       status: response.status,
@@ -146,4 +168,14 @@ export function createTodo(body: CreateTodoRequest): Promise<Todo> {
  */
 export function updateTodo(id: string, body: UpdateTodoRequest): Promise<Todo> {
   return request(todoPath(id), { method: "PATCH", body, schema: TodoSchema })
+}
+
+/**
+ * `DELETE /api/v1/todos/:id`: `204` with no body, resolved as `null`. No
+ * body or `Content-Type` is sent. An unknown id rejects `NOT_FOUND` (the
+ * delete hook counts it as success); other failures classify as for every
+ * request.
+ */
+export function deleteTodo(id: string): Promise<null> {
+  return request(todoPath(id), { method: "DELETE", schema: null })
 }

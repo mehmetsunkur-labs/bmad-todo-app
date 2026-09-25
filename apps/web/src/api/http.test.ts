@@ -1,9 +1,13 @@
-import { REQUEST_TIMEOUT_MS, TodoListResponseSchema } from "@todos/shared"
+import {
+  REQUEST_TIMEOUT_MS,
+  TodoListResponseSchema,
+  TodoSchema,
+} from "@todos/shared"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { jsonResponse, makeTodo, fakeAbortSignalTimeout } from "@/test/render"
 
-import { HttpError, createTodo, listTodos, request } from "./http"
+import { HttpError, createTodo, deleteTodo, listTodos, request } from "./http"
 
 const fetchMock = vi.fn<typeof fetch>()
 
@@ -60,15 +64,87 @@ describe("http request", () => {
     expect(init?.body).toBe('{"a":1}')
   })
 
-  it("does not parse a 204", async () => {
+  it("resolves a typed null for a 204 on a call that expects no body", async () => {
+    stubFetch()
+    const response = new Response(null, { status: 204 })
+    const json = vi.spyOn(response, "json")
+    fetchMock.mockResolvedValue(response)
+    const result: null = await request("/api/v1/todos/x", {
+      method: "DELETE",
+      schema: null,
+    })
+    expect(result).toBeNull()
+    expect(json).not.toHaveBeenCalled()
+  })
+
+  it("resolves null without parsing for any 2xx on a call that expects no body", async () => {
+    stubFetch()
+    const response = new Response("not json", { status: 200, headers: {} })
+    const json = vi.spyOn(response, "json")
+    fetchMock.mockResolvedValue(response)
+    await expect(
+      request("/api/v1/todos/x", { method: "DELETE", schema: null })
+    ).resolves.toBeNull()
+    expect(json).not.toHaveBeenCalled()
+  })
+
+  it("still classifies failures on a call that expects no body", async () => {
+    stubFetch()
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        { error: { code: "NOT_FOUND", message: "Todo not found" } },
+        404
+      )
+    )
+    const error = await failure(
+      request("/api/v1/todos/x", { method: "DELETE", schema: null })
+    )
+    expect(error.kind).toBe("NOT_FOUND")
+    expect(error.status).toBe(404)
+  })
+
+  it("classifies a 204 on a call that expects a body as INTERNAL, without parsing", async () => {
+    stubFetch()
+    const response = new Response(null, { status: 204 })
+    const json = vi.spyOn(response, "json")
+    fetchMock.mockResolvedValue(response)
+    const error = await failure(
+      request("/api/v1/todos/x", {
+        method: "PATCH",
+        body: { completed: true },
+        schema: TodoSchema,
+      })
+    )
+    expect(error.kind).toBe("INTERNAL")
+    expect(error.status).toBe(204)
+    expect(json).not.toHaveBeenCalled()
+  })
+
+  it("deleteTodo sends DELETE with no body or Content-Type and resolves null on 204", async () => {
     stubFetch()
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
-    await expect(
-      request("/api/v1/todos/x", {
-        method: "DELETE",
-        schema: TodoListResponseSchema,
-      })
-    ).resolves.toBeUndefined()
+    const id = "0199a0b2-3c4d-7e8f-9a0b-1c2d3e4f5a6b"
+
+    await expect(deleteTodo(id)).resolves.toBeNull()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [path, init] = fetchMock.mock.calls[0]!
+    expect(path).toBe(`/api/v1/todos/${id}`)
+    expect(init?.method).toBe("DELETE")
+    expect(init?.body).toBeUndefined()
+    expect(init?.headers).toBeUndefined()
+    expect(init?.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it("deleteTodo rejects NOT_FOUND for an unknown id", async () => {
+    stubFetch()
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        { error: { code: "NOT_FOUND", message: "Todo not found" } },
+        404
+      )
+    )
+    expect((await failure(deleteTodo("x"))).kind).toBe("NOT_FOUND")
   })
 
   it("parses with the shared schema, ignoring unknown fields", async () => {
