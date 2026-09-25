@@ -1,13 +1,13 @@
 import { memo, useContext, useId, useLayoutEffect, useRef } from "react"
 
 import type { Todo } from "@todos/shared"
-import { cn } from "cn"
 import { Pencil, Trash2 } from "lucide-react"
 
 import type { ToggleTodoVars } from "@/api/hooks/use-toggle-todo"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { announce } from "@/lib/announce"
+import { cn } from "@/lib/utils"
 import { HOVER_POINTER_QUERY, useMediaQuery } from "@/lib/use-media-query"
 
 import { CreatedAt } from "./created-at"
@@ -16,8 +16,18 @@ import { animateRowEntrance, RowEntranceContext } from "./row-entrance"
 import { animateRowExit } from "./row-exit"
 
 /**
- * One Todo row: the Completion checkbox, then a column with the Description
- * and Created At below it, then the Row actions (Edit, then Delete).
+ * A Row action's hit area: a square extender over the whole 44 × 44 button
+ * (1 px out, over its transparent border), so its rounded corners still
+ * take a tap (hit testing follows `border-radius`; the pseudo-element
+ * doesn't).
+ */
+export const ROW_ACTION_HIT_AREA =
+  "relative size-touch-target after:absolute after:-inset-px after:content-['']"
+
+/**
+ * One Todo row: the Completion checkbox, then the Description, then the Row
+ * actions (Edit, then Delete), with Created At on a second line under the
+ * Description and the Row actions.
  * Transparent, no hover background, and not clickable itself. Tab order:
  * checkbox, Edit, Delete.
  *
@@ -147,18 +157,26 @@ export const TodoRow = memo(function TodoRow({
       ref={rowRef}
       data-todo-id={id}
       inert={exiting}
-      className="group/row flex min-h-touch-target items-start border-b py-row-padding-y"
+      className="group/row grid min-h-touch-target grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-1 border-b py-row-padding-y"
     >
-      {/* The hit area is 44 px, pulled up so the box centers on the 24 px first line. */}
-      <div className="-my-2.5 flex size-touch-target shrink-0 items-center justify-center">
+      {/* The hit area is 44 px, pulled up so the box centers on the 24 px
+          first line, and left so the box sits on the column's edge, in line
+          with the Add row input (as in the mockup). The 16 px right margin
+          keeps the open edit field (pulled 13 px left) 6 px clear of the hit
+          extender: the checkbox keeps its full 44 × 44 while editing, and a
+          tap on the field's padding isn't snapped to the checkbox by the
+          browser's touch adjustment. */}
+      <div className="-my-2.5 mr-4 -ml-3.5 flex size-touch-target shrink-0 items-center justify-center">
         <Checkbox
           checked={todo.completed}
           onCheckedChange={handleCheckedChange}
           aria-labelledby={descriptionId}
-          className="relative after:absolute after:-inset-3.5 after:content-['']"
+          // The extender is placed from the 14 px padding box (inside the
+          // 1 px border): 15 px out on each side makes the full 44 × 44.
+          className="relative after:absolute after:-inset-[15px] after:content-['']"
         />
       </div>
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-col">
         {isEditing ? (
           <>
             {/* Keeps the checkbox's accessible name while the field is open. */}
@@ -186,13 +204,20 @@ export const TodoRow = memo(function TodoRow({
             {todo.description}
           </p>
         )}
-        <CreatedAt iso={todo.createdAt} />
       </div>
-      {/* Row actions: hit areas pulled up to align with the first line. */}
+      {/* Its own grid line under the Description and the Row actions, so the
+          longer "Created {full}" shown on focus has the room to stay on one
+          line down to 320 px (no layout jump). */}
+      <CreatedAt
+        iso={todo.createdAt}
+        className="col-span-2 col-start-2 row-start-2"
+      />
+      {/* Row actions: hit areas pulled up to align with the first line, and
+          right so the Delete icon ends near the column's edge (the mockup). */}
       <div
         data-testid="row-actions"
         className={cn(
-          "-my-2.5 flex shrink-0 items-center",
+          "col-start-3 row-start-1 -my-2.5 -mr-3 flex shrink-0 items-center",
           hoverPointer &&
             "opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100"
         )}
@@ -204,7 +229,10 @@ export const TodoRow = memo(function TodoRow({
           size="icon"
           aria-label={`Edit todo: ${todo.description}`}
           onClick={() => onEdit(id)}
-          className="size-touch-target text-muted-foreground hover:text-foreground focus-visible:text-foreground"
+          className={cn(
+            ROW_ACTION_HIT_AREA,
+            "text-muted-foreground hover:text-foreground focus-visible:text-foreground"
+          )}
         >
           <Pencil aria-hidden="true" className="size-4" />
         </Button>
@@ -214,7 +242,10 @@ export const TodoRow = memo(function TodoRow({
           size="icon"
           aria-label={`Delete todo: ${todo.description}`}
           onClick={() => onDelete(todo)}
-          className="size-touch-target text-muted-foreground hover:text-destructive focus-visible:text-destructive"
+          className={cn(
+            ROW_ACTION_HIT_AREA,
+            "text-muted-foreground hover:text-destructive focus-visible:text-destructive"
+          )}
         >
           <Trash2 aria-hidden="true" className="size-4" />
         </Button>
