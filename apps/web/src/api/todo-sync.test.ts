@@ -3,12 +3,14 @@ import { describe, expect, it, vi } from "vitest"
 
 import { makeTodo } from "@/test/render"
 
+import { deleteTodoRequest } from "./hooks/use-delete-todo"
 import { HttpError } from "./http"
 import { createQueryClient, TODOS_QUERY_KEY } from "./query-client"
 import {
   createOp,
   createTodoMutation,
   createTodoSync,
+  deleteOp,
   DroppedError,
   getTodoSync,
   notFoundMeansDeleted,
@@ -534,6 +536,238 @@ describe("createTodoMutation: toggle kind", () => {
     expect(find(todo.id)).toEqual(todo)
     expect(sync.pending.has(todo.id)).toBe(false)
     expect(sync.generation.get(todo.id)).toBe(1)
+  })
+})
+
+describe("createTodoMutation: delete kind", () => {
+  const todo = makeTodo({
+    id: "00000000-0000-7000-8000-000000000001",
+    description: "todo",
+    createdAt: "2026-09-24T09:00:00.000Z",
+  })
+  const other = makeTodo({
+    id: "00000000-0000-7000-8000-000000000002",
+    description: "other",
+    createdAt: "2026-09-24T10:00:00.000Z",
+  })
+  const NEW_ID = "0199a0b2-3c4d-7e8f-9a0b-000000000099"
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    let reject!: (error: unknown) => void
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    return { promise, resolve, reject }
+  }
+
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  function setup() {
+    const queryClient = createQueryClient()
+    queryClient.setQueryDefaults(TODOS_QUERY_KEY, { structuralSharing: false })
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const sync = getTodoSync(queryClient)
+    sync.seedFromList([other, todo])
+    queryClient.setQueryData<Todo[]>(TODOS_QUERY_KEY, [other, todo])
+    const list = () => queryClient.getQueryData<Todo[]>(TODOS_QUERY_KEY)!
+    const ids = () => list().map((t) => t.id)
+    return { queryClient, invalidate, sync, list, ids }
+  }
+
+  interface DeleteVars {
+    id: string
+  }
+  interface ToggleVars {
+    id: string
+    completed: boolean
+  }
+
+  function deleteKind(
+    request: (vars: DeleteVars) => Promise<Todo | null>,
+    onFailure = vi.fn()
+  ) {
+    const mutation = createTodoMutation<DeleteVars>("delete", {
+      op: deleteOp,
+      request,
+      onFailure,
+    })
+    return { mutation, onFailure }
+  }
+
+  function toggleKind(
+    request: (vars: ToggleVars) => Promise<Todo | null>,
+    onFailure = vi.fn()
+  ) {
+    const mutation = createTodoMutation<ToggleVars>("toggle", {
+      op: (vars) => toggleOp(vars.completed),
+      request,
+      failureState: notFoundMeansDeleted,
+      onFailure,
+    })
+    return { mutation, onFailure }
+  }
+
+  it("deleteOp renders null whatever came before", () => {
+    expect(deleteOp().kind).toBe("delete")
+    expect(deleteOp().apply(todo)).toBeNull()
+    expect(deleteOp().apply(null)).toBeNull()
+  })
+
+  it("removes the row at once; success confirms null", async () => {
+    const { queryClient, sync, ids, invalidate } = setup()
+    const request = deferred<null>()
+    const { mutation, onFailure } = deleteKind(() => request.promise)
+
+    const done = mutation.mutate(queryClient, { id: todo.id })
+    await flush()
+    expect(ids()).toEqual([other.id])
+
+    request.resolve(null)
+    await done
+    expect(sync.confirmed.get(todo.id)).toBeNull()
+    expect(sync.pending.has(todo.id)).toBe(false)
+    expect(ids()).toEqual([other.id])
+    expect(onFailure).not.toHaveBeenCalled()
+    expect(invalidate).not.toHaveBeenCalled()
+  })
+
+  it("a 404 is counted as success: confirmed null, no failure", async () => {
+    const { queryClient, sync, ids } = setup()
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: { code: "NOT_FOUND", message: "Todo not found" },
+        }),
+        { status: 404, headers: { "Content-Type": "application/json" } }
+      )
+    )
+    vi.stubGlobal("fetch", fetchMock)
+    try {
+      const { mutation, onFailure } = deleteKind(deleteTodoRequest)
+      await mutation.mutate(queryClient, { id: todo.id })
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock.mock.calls[0]![1]?.method).toBe("DELETE")
+      expect(sync.confirmed.get(todo.id)).toBeNull()
+      expect(sync.generation.get(todo.id) ?? 0).toBe(0)
+      expect(ids()).toEqual([other.id])
+      expect(onFailure).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("a real failure re-renders the confirmed Todo at its position, once", async () => {
+    const { queryClient, sync, list, ids } = setup()
+    const { mutation, onFailure } = deleteKind(() =>
+      Promise.reject(new HttpError("INTERNAL", { status: 500 }))
+    )
+
+    await mutation.mutate(queryClient, { id: todo.id })
+
+    expect(ids()).toEqual([other.id, todo.id])
+    expect(list()[1]).toEqual(todo)
+    expect(sync.confirmed.get(todo.id)).toEqual(todo)
+    expect(sync.generation.get(todo.id)).toBe(1)
+    expect(onFailure).toHaveBeenCalledTimes(1)
+  })
+
+  it("delete during a pending toggle: the DELETE waits for the PATCH, the row is removed at once", async () => {
+    const { queryClient, sync, ids } = setup()
+    const patch = deferred<Todo>()
+    const patchRequest = vi.fn(() => patch.promise)
+    const del = deferred<null>()
+    const deleteRequest = vi.fn(() => del.promise)
+    const { mutation: toggle } = toggleKind(patchRequest)
+    const { mutation: remove, onFailure } = deleteKind(deleteRequest)
+
+    const toggleDone = toggle.mutate(queryClient, {
+      id: todo.id,
+      completed: true,
+    })
+    const deleteDone = remove.mutate(queryClient, { id: todo.id })
+    await flush()
+    expect(ids()).toEqual([other.id])
+    expect(patchRequest).toHaveBeenCalledTimes(1)
+    expect(deleteRequest).not.toHaveBeenCalled()
+
+    patch.resolve({ ...todo, completed: true })
+    await flush()
+    // The PATCH response lands under the pending delete: still removed.
+    expect(ids()).toEqual([other.id])
+    expect(deleteRequest).toHaveBeenCalledTimes(1)
+
+    del.resolve(null)
+    await Promise.all([toggleDone, deleteDone])
+    expect(ids()).toEqual([other.id])
+    expect(sync.confirmed.get(todo.id)).toBeNull()
+    expect(sync.pending.has(todo.id)).toBe(false)
+    expect(onFailure).not.toHaveBeenCalled()
+  })
+
+  it("a delete on a pending create is dropped when the create fails: only the create failure", async () => {
+    const { queryClient, sync, ids } = setup()
+    const post = deferred<Todo>()
+    const createFailure = vi.fn()
+    const create = createTodoMutation<{ id: string; description: string }>(
+      "create",
+      {
+        op: (vars) =>
+          createOp(vars.id, vars.description, "2026-09-24T11:00:00.000Z"),
+        request: () => post.promise,
+        onFailure: createFailure,
+      }
+    )
+    const deleteRequest = vi.fn(async () => null)
+    const { mutation: remove, onFailure: deleteFailure } =
+      deleteKind(deleteRequest)
+
+    const createDone = create.mutate(queryClient, {
+      id: NEW_ID,
+      description: "new",
+    })
+    const deleteDone = remove.mutate(queryClient, { id: NEW_ID })
+    await flush()
+    expect(ids()).toEqual([other.id, todo.id])
+
+    post.reject(new HttpError("INTERNAL", { status: 500 }))
+    await Promise.all([createDone, deleteDone])
+
+    expect(deleteRequest).not.toHaveBeenCalled()
+    expect(createFailure).toHaveBeenCalledTimes(1)
+    expect(deleteFailure).not.toHaveBeenCalled()
+    expect(ids()).toEqual([other.id, todo.id])
+    expect(sync.pending.has(NEW_ID)).toBe(false)
+  })
+
+  it("a toggle queued after a failed delete is dropped: no fetch, no second failure", async () => {
+    const { queryClient, sync, list, ids } = setup()
+    const del = deferred<null>()
+    const { mutation: remove, onFailure: deleteFailure } = deleteKind(
+      () => del.promise
+    )
+    const patchRequest = vi.fn<(vars: ToggleVars) => Promise<Todo>>()
+    const { mutation: toggle, onFailure: toggleFailure } =
+      toggleKind(patchRequest)
+
+    const deleteDone = remove.mutate(queryClient, { id: todo.id })
+    const toggleDone = toggle.mutate(queryClient, {
+      id: todo.id,
+      completed: true,
+    })
+    await flush()
+
+    del.reject(new HttpError("NETWORK"))
+    await Promise.all([deleteDone, toggleDone])
+
+    expect(patchRequest).not.toHaveBeenCalled()
+    expect(deleteFailure).toHaveBeenCalledTimes(1)
+    expect(toggleFailure).not.toHaveBeenCalled()
+    expect(ids()).toEqual([other.id, todo.id])
+    expect(list()[1]).toEqual(todo)
+    expect(sync.pending.has(todo.id)).toBe(false)
   })
 })
 

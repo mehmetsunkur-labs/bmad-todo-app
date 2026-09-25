@@ -41,6 +41,11 @@ export function registerAddRowController(next: AddRowController): () => void {
   }
 }
 
+/** Focuses the Add row input, if the Add row is mounted. */
+export function focusAddRow(): void {
+  controller?.focus()
+}
+
 /** The Description as-is up to 40 characters; otherwise its first 40 and "…". */
 export function quoteDescription(description: string): string {
   const chars = Array.from(description)
