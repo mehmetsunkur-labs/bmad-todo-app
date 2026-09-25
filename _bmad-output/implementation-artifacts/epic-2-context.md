@@ -21,7 +21,7 @@ Give the user the rest of the everyday Todo lifecycle on top of Epic 1's list-an
 - **Failure (network, 10 s timeout, 5xx, non-envelope):** the affected Todo returns to its last confirmed state, and exactly one non-blocking message appears. Ops queued after a failed op on the same Todo are dropped silently. A failed edit keeps the attempted text, either in reopened edit mode or in a Retry toast. The API `message` is never shown.
 - **Concurrency:** writes from several tabs are last-write-wins, with no crashes or corrupted rows. No acknowledged change is ever lost.
 - **API:** unknown id returns not found, invalid input writes nothing, there are no partial writes, and every single-Todo write is one statement.
-- **Testing:** API tests cover every PATCH/DELETE case. Web tests include `todo-sync` race cases: double toggle, toggle while a create is pending and the create fails, and delete during a pending edit. Every UI story also gets a Playwright check against the dev stack before merge.
+- **Testing:** API tests cover every PATCH/DELETE case. Web tests include `todo-sync` race cases: double toggle, toggle while a create is pending and the create fails, and delete during a pending edit. Every UI story also gets a Playwright check against the dev stack before merge. (As built: with no e2e harness until Epic 3, Stories 2.2–2.4 ran this as a manual real-browser check, Chromium via playwright-core against the dev stack. Story 3.3's `pnpm test:e2e` suite now covers these flows.)
 
 ## Technical Decisions
 

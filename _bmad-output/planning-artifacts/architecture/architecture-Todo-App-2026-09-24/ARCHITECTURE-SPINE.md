@@ -70,8 +70,11 @@ Arrows are the only allowed import directions. `apps/web` and `apps/api` never i
   | PATCH | `/api/v1/todos/:id` | `{ description?, completed? }`, at least one key | `200` `Todo` |
   | DELETE | `/api/v1/todos/:id` | — | `204`, no body |
   | GET | `/api/v1/health` | — | `200` `{ "status": "ok" }` only when a `SELECT 1` against the DB succeeds; otherwise `503` with the AD-5 envelope |
+  | GET | `/api/v1/openapi.json` | — | `200` the OpenAPI 3.0 document generated from the shared schemas (Story 3.2); not listed in the document itself |
 
   PATCH sends only the fields the user changed. A missing key means "unchanged", and `null` is a validation error. Changes within v1 are additive only: new response fields and new optional request fields are allowed, but renaming, removing, or retyping a field is not. Clients ignore unknown response fields. The list is always wrapped in an object, never returned as a bare array.
+
+  Besides the statuses above and the AD-5 errors for its own inputs, every route can return a framework `400` (for example a malformed URL), and every route with a body parser (POST, PATCH and DELETE) can return `413` and `415`. The client sends DELETE with no body, but a DELETE that carries one has it parsed. The OpenAPI document lists every status each route can actually return (Story 3.2, amended 2026-09-25).
 
 ### AD-3 — Todo DTO, normalization, and server-owned time
 
@@ -79,7 +82,7 @@ Arrows are the only allowed import directions. `apps/web` and `apps/api` never i
 - **Prevents:** disagreement on field names, date precision, how length is measured, line breaks, and who owns the clock.
 - **Rule:**
   - **Shape:** `Todo = { id, description, completed, createdAt, updatedAt }`. `id` is any RFC 9562 UUID string (`z.uuid()`, version not enforced). The timestamps are ISO-8601 UTC strings with exactly millisecond precision.
-  - **Time:** the database clock is the only clock. The columns are `timestamptz(3)`. `created_at` defaults to `now()`, and every UPDATE that changes a value sets `updated_at = now()`. The repository maps `Date` to an ISO string. Client-supplied timestamps are rejected by the strict schemas.
+  - **Time:** the database clock is the only clock. The columns are `timestamptz(3)`. `created_at` defaults to `now()`, and every UPDATE that changes a value sets `updated_at = GREATEST(now(), updated_at)`. `now()` is the transaction start, so a racing PATCH that commits last never moves `updated_at` backwards. The repository maps `Date` to an ISO string. Client-supplied timestamps are rejected by the strict schemas.
   - **Normalization, done by the service, the same way for POST and PATCH:** replace each `\r\n`, `\r`, or `\n` with a space, then trim. The result must be 1 to `DESCRIPTION_MAX` long, measured as JavaScript `string.length` (UTF-16 code units, the same unit as the HTML `maxlength` attribute).
   - **Concurrent writes:** last write wins. A PATCH that changes nothing returns the stored Todo unchanged.
 
@@ -108,19 +111,19 @@ Arrows are the only allowed import directions. `apps/web` and `apps/api` never i
 
   | Code | Status | Raised for |
   | --- | --- | --- |
-  | `VALIDATION_ERROR` | 400 | Zod validation failures (with `details`), malformed JSON, a JSON content type with an empty body |
-  | `VALIDATION_ERROR` | 413 | Body over `bodyLimit` (16 KiB) |
-  | `VALIDATION_ERROR` | 415 | Unsupported content type |
+  | `VALIDATION_ERROR` | 400 | Zod validation failures (with `details`), malformed JSON, a JSON content type with an empty body, and errors raised before routing, such as a malformed URL, on any route (Fastify `frameworkErrors`) |
+  | `VALIDATION_ERROR` | 413 | Body over `bodyLimit` (16 KiB), on any route that parses a body, DELETE included |
+  | `VALIDATION_ERROR` | 415 | Unsupported content type, on any route that parses a body, DELETE included |
   | `NOT_FOUND` | 404 | Unknown Todo id or unknown route (`setNotFoundHandler`) |
   | `CONFLICT` | 409 | Idempotent-replay mismatch (AD-4) |
   | `UNAVAILABLE` | 503 | Health check failed, or the database is unreachable |
   | `INTERNAL` | 500 | Anything else. No stack trace in the body |
 
-  One `setErrorHandler` in `apps/api/src/errors.ts` produces every error. Routes and services throw `AppError(code, details?)` and never write error bodies themselves. An API test covers each row of the table.
+  One `setErrorHandler` in `apps/api/src/errors.ts` produces every error, and the not-found handler and the `frameworkErrors` hook send the same envelope. Routes and services throw `AppError(code, details?)` and never write error bodies themselves. An API test covers each row of the table. The OpenAPI document lists, per route, every status in this table that the route can actually return.
 
   **Client side:**
   - The web shows the "too long" copy when `details` contains `reason: "too_long"`. For every other code, it shows the failure copy for that action (EXPERIENCE.md), and it **never renders `message`**.
-  - A response whose body isn't this envelope, such as an nginx HTML 502, is classified as `INTERNAL`.
+  - A response whose body isn't this envelope is classified as `INTERNAL`. The `web` container's nginx sends such responses itself: HTML `502` or `504` when the API is unreachable, and HTML `413` for a body over its `client_max_body_size 32k`. That limit is twice `bodyLimit`, so a body just over 16 KiB still reaches the API and gets the JSON `413`. The OpenAPI description says so.
   - A `fetch` rejection or timeout is classified as the client-only kind `NETWORK`.
 
 ### AD-6 — Client server-state: one cache, pinned query defaults, one HTTP caller
@@ -128,7 +131,7 @@ Arrows are the only allowed import directions. `apps/web` and `apps/api` never i
 - **Binds:** FR-1, FR-3, FR-10, NFR-1, NFR-3
 - **Prevents:** duplicate client stores of Todos, background refetches overwriting optimistic rows, silently paused requests, and inconsistent HTTP handling.
 - **Rule:**
-  - **The cache:** the rendered Todo List exists only in the TanStack Query cache under `['todos']`. The only other Todo data the client keeps is the per-Todo sync bookkeeping in `todo-sync.ts` (AD-12). Components hold only UI state, such as input drafts and edit-mode text.
+  - **The cache:** the rendered Todo List exists only in the TanStack Query cache under `['todos']`. The only other Todo data the client keeps is the per-Todo sync bookkeeping in `todo-sync.ts` (AD-12). Components hold only UI state, such as input drafts and edit-mode text, plus display-only copies of deleted rows that `TodoList` keeps only for their exit motion. These copies are never sync state and are never written to the cache.
   - **Pinned defaults:** `query-client.ts` sets these defaults for queries and mutations, and hooks must not override them:
     - `staleTime: Infinity`
     - `gcTime: Infinity`
@@ -137,7 +140,7 @@ Arrows are the only allowed import directions. `apps/web` and `apps/api` never i
     - `refetchOnWindowFocus: false`, `refetchOnReconnect: false`, `refetchOnMount: false`
   - **Fetching the list:** the list is fetched only when the page loads and by "Try again", which calls `resetQueries({ queryKey: ['todos'] })`. A successful list fetch seeds the confirmed store in `todo-sync.ts`, and the rendered list is the seeded state with pending ops re-applied. Seeding never sets an id with pending ops to `null`.
   - **Writes:** mutations never call `invalidateQueries(['todos'])`.
-  - **The HTTP client:** `http.ts` is the only code that calls `fetch`. It always requests the relative path `/api/v1/...` and uses `AbortSignal.timeout(REQUEST_TIMEOUT_MS)`. It sets `Content-Type: application/json` only when there is a body, never parses a `204` and resolves it to `null` (a `204` where a body is expected is `INTERNAL`), validates responses against the shared schemas, and classifies failures as AD-5 describes.
+  - **The HTTP client:** `http.ts` is the only code that calls `fetch`. It always requests the relative path `/api/v1/...` and uses `AbortSignal.timeout(REQUEST_TIMEOUT_MS)`. It sets `Content-Type: application/json` only when there is a body, and never parses a `204`. A call that expects no body (DELETE) resolves any `2xx` to `null` without parsing, and a `204` where a body is expected is `INTERNAL`. It validates responses against the shared schemas and classifies failures as AD-5 describes.
 
 ### AD-7 — API layering and persistence ownership
 
@@ -174,14 +177,17 @@ Arrows are the only allowed import directions. `apps/web` and `apps/api` never i
     - It sets `name: todos` and defines `web`, `api`, and `db` (`postgres:18-alpine`).
     - The named volume `todos-data` is mounted at **`/var/lib/postgresql`**, the PostgreSQL 18 image layout. It is never mounted at `/var/lib/postgresql/data`, and `PGDATA` is never overridden.
     - Only `web` publishes a host port, `${WEB_PORT:-8080}`.
+    - `api` and `web` build the images `todos-api:${TODOS_IMAGE_TAG:-prod}` and `todos-web:${TODOS_IMAGE_TAG:-prod}`. The override tags its builds `:dev`, so one mode never reuses the other's image. The test harnesses set `TODOS_IMAGE_TAG` (`smoke`, `smoke-dev`, `e2e`) and use their own Compose projects, so they never rebuild the owner's tags. Nobody else sets it.
     - Every service has `restart: unless-stopped`, and `api` and `web` have `init: true`.
     - `db` has the healthcheck `pg_isready -h 127.0.0.1 -U $POSTGRES_USER`. `api` has `depends_on: db: service_healthy`, and its own healthcheck calls `/api/v1/health`.
   - **`compose.override.yaml`, loaded automatically by `docker compose up`:** turns the stack into the dev and debug setup the addendum asks for.
     - `web` runs the Vite dev server with HMR and source mounts.
+    - In `api` and `web`, the containers' `node_modules` are anonymous volumes over the source mount, filled from the image. After a dependency change, `docker compose rm -fsv api web && docker compose up --build -V` renews them. It never touches `db` or `todos-data`.
     - `api` runs under `tsx watch` with `--inspect=0.0.0.0:9229`, published on the host only as `127.0.0.1:9229`.
     - Host ports are overridable in `.env` (`WEB_PORT`, `DB_PORT`); dev never publishes on all interfaces.
     - `db` publishes `127.0.0.1:${DB_PORT:-5432}`, and an init script in `/docker-entrypoint-initdb.d` creates the `todos_test` database.
-  - **Running the production-like stack:** use `docker compose -f compose.yaml up -d`.
+  - **Running the production-like stack:** use `docker compose -f compose.yaml up -d` (with `--build` after pulling or changing code).
+  - **One mode at a time:** dev and the production-like stack are the same Compose project, `todos`. They share its containers, `WEB_PORT` and the `todos-data` volume. Starting one mode replaces the other's containers and keeps the data. `todos_test` exists only if the dev stack initialised the volume. Whether the production-like stack should get its own project and volume is an open decision (`deferred-work.md`).
   - **Tests:** a test checks that Todos survive `docker compose down` followed by `up`.
 
 ### AD-11 — Logging contract

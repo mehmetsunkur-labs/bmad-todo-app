@@ -19,7 +19,8 @@ colors:
   ring: '#2F6F6A'
   ring-dark: '#5FB3AA'
 typography:
-  # Body, label and small text use shadcn's default sans stack.
+  # Body, label and small text use shadcn's default sans stack: as built, Geist Variable
+  # (@fontsource-variable/geist). The final font choice is open (deferred-work.md, G-12).
   # Only the roles Todos needs are named here.
   app-title:
     fontSize: 24px
@@ -125,7 +126,7 @@ There is one brand color. Everything else uses shadcn's neutrals.
 
 - **Quiet Teal** (`#2F6F6A` light / `#5FB3AA` dark) is the brand color `[ASSUMPTION: the facilitator chose this hue on the Fast path; any calm, low-saturation accent that passes the contrast checks below can replace it]`. It is used for the checked Completion checkbox, the Add button, the focus ring, and the favicon. It is never used for decoration, backgrounds, or blocks of text.
 - **Neutrals** (`background`, `foreground`, `muted-foreground`, `border`, `input`, `accent`) come from shadcn's neutral theme. A Completed Todo's Description uses `muted-foreground`.
-- **Destructive**, also from shadcn, appears in only three places: the Delete button's icon on hover or focus, the character counter at 500 characters, and the toast's error icon.
+- **Destructive**, also from shadcn, appears in only three places: the Delete button's icon on hover or `focus-visible`, the character counter at 500 characters, and the toast's error icon.
 
 **Contrast targets (WCAG 2.1 AA, verified):**
 
@@ -140,7 +141,7 @@ Avoid gradients, colored surfaces, color-coding by state beyond the checked Comp
 
 ## Typography
 
-Todos uses shadcn's default sans stack, with four named roles:
+Todos uses shadcn's default sans stack (as built, Geist Variable, shadcn's current preset; the mockup renders the system UI stack, and which one is final is an open decision, G-12 in `deferred-work.md`), with four named roles:
 
 - **`app-title`** (24px, 600): the product name "Todos", left-aligned in the App header, once per page.
 - **`todo-description`** (16px, 400, line height 1.5): every Todo Description, the Add row input, and the Inline edit field. At 16px, iOS Safari does not zoom the page when an input is focused.
@@ -177,13 +178,13 @@ Todos-specific components and brand-layer overrides:
 
 - **App header:** "Todos" in `app-title`, left-aligned.
 - **Add row:** a full-width `Input` in `todo-description` style, with a primary `Button` labeled "Add" on the right. Both are `{spacing.touch-target}` tall. The **character counter** (`{components.character-counter}`) sits under the input, right-aligned to the input rather than the button. Its line is always reserved, so the counter never pushes the layout down. It is visible only from 450 characters and turns destructive at 500. When disabled (in the Loading and Load error states), the whole row uses shadcn's disabled style (50% opacity).
-- **Todo row:** left to right, the Completion checkbox, then the Description (`todo-description`) with the Created At time (`meta`, `muted-foreground`) on the line below, then the Row actions. The row is transparent with a bottom divider and has no hover background.
-- **Completion checkbox:** shadcn `Checkbox` with a 16px visual size, centered in a `{spacing.touch-target}` hit area that overlaps the row padding. When checked, it is filled with `{colors.primary}` and shows a `{colors.primary-foreground}` check mark.
+- **Todo row:** left to right, the Completion checkbox, then the Description (`todo-description`), then the Row actions. The Created At time (`meta`, `muted-foreground`) sits on its own line below them, starting under the Description and spanning the Description and Row actions columns. That gives "Created {full date and time}" room to stay on one line down to 320px. The row is transparent with a bottom divider and has no hover background.
+- **Completion checkbox:** shadcn `Checkbox` with a 16px visual size, centered in a `{spacing.touch-target}` hit area that overlaps the row padding. The hit area is pulled 14px left, so the box lines up with the Add row input's left edge. It has a 16px right margin, so the open Inline edit field (pulled left by its own padding) never covers it, and the Description starts 50px in. The Row actions are pulled 12px right, so the Delete icon ends near the column's edge. Where the mock places the Description closer (34px), the 44×44 hit area wins. When checked, it is filled with `{colors.primary}` and shows a `{colors.primary-foreground}` check mark.
 - **Completed Todo row:** the Completion checkbox is checked, and the Description uses line-through and `muted-foreground`. With three cues, status never relies on color alone. The row keeps its place in the list.
-- **Row actions (Edit button, Delete button):** ghost `Button`s with a `{spacing.touch-target}` hit area, showing lucide `Pencil` and `Trash2` icons at 16px in `muted-foreground`. On hover or focus, the Edit button turns `foreground` and the Delete button turns `destructive`.
-- **Inline edit field:** an auto-growing `Textarea` that replaces the Description text in place, in `todo-description` style, with its text starting at the same left edge as the Description. While editing, the Created At time and the Row actions stay visible. A character counter (same spec as in the Add row) appears under the field from 450 characters.
+- **Row actions (Edit button, Delete button):** ghost `Button`s with a `{spacing.touch-target}` hit area, showing lucide `Pencil` and `Trash2` icons at 16px in `muted-foreground`. On hover or `focus-visible`, the Edit button turns `foreground` and the Delete button turns `destructive`.
+- **Inline edit field:** an auto-growing `Textarea` that replaces the Description text in place, in `todo-description` style, with its text starting at the same left edge as the Description. While editing, the Created At time and the Row actions stay visible. A character counter (same spec as in the Add row) sits under the field. Its line is always reserved while the field is open, and it is visible from 450 characters. With the field's own padding, this makes the row about 22px taller while editing. Whether to keep that shift is an open decision (G-13 in `deferred-work.md`).
 - **Created At time:** in `meta` style. It shows a relative time by default, and switches to the full date and time while anything in its row has focus (see EXPERIENCE.md).
-- **Empty state:** a centered block in the list area. It has an `empty-title` headline and one line of body text in `muted-foreground`. No illustration `[ASSUMPTION: no illustration, to stay calm and minimal]`.
+- **Empty state:** a centered block in the list area. It has an `empty-title` headline and one line of 14px body text (Tailwind `text-sm`) in `muted-foreground`. No illustration `[ASSUMPTION: no illustration, to stay calm and minimal]`.
 - **Load error state:** the same layout as the Empty state, plus a secondary `Button` labeled "Try again".
 - **Loading skeleton:** four shadcn `Skeleton` rows shaped like Todo rows: a 16px square, one text bar, and a short meta bar.
 - **Toast:** Sonner in its default style (neutral popover surface, not `richColors`), with a lucide `CircleX` icon in `destructive`. An optional text action ("Retry") uses shadcn's action-button style.
