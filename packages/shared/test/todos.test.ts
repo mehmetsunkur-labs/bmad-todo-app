@@ -4,8 +4,11 @@ import {
   compareTodos,
   CreateTodoRequestSchema,
   normalizeDescription,
+  TODO_PATH,
+  TodoIdParamsSchema,
   TodoListResponseSchema,
   TodoSchema,
+  UpdateTodoRequestSchema,
 } from "../src"
 
 const todo = (id: string, createdAt: string) => ({ id, createdAt })
@@ -135,5 +138,78 @@ describe("CreateTodoRequestSchema", () => {
     ["a numeric description", { ...valid, description: 1 }],
   ])("rejects %s", (_name, body) => {
     expect(CreateTodoRequestSchema.safeParse(body).success).toBe(false)
+  })
+})
+
+describe("TODO_PATH", () => {
+  it("is the single-Todo route under the todos path", () => {
+    expect(TODO_PATH).toBe("/api/v1/todos/:id")
+  })
+})
+
+describe("TodoIdParamsSchema", () => {
+  const id = "0199a0b2-3c4d-7e8f-9a0b-1c2d3e4f5a6b"
+
+  it.each([
+    ["a v7 uuid", id],
+    ["an upper-case uuid", id.toUpperCase()],
+    ["a v4 uuid", "3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f"],
+  ])("accepts %s", (_name, value) => {
+    expect(TodoIdParamsSchema.parse({ id: value })).toEqual({ id: value })
+  })
+
+  it.each([
+    ["a non-uuid id", { id: "not-a-uuid" }],
+    ["an empty id", { id: "" }],
+    ["a missing id", {}],
+    ["an extra key", { id, other: "x" }],
+  ])("rejects %s", (_name, params) => {
+    expect(TodoIdParamsSchema.safeParse(params).success).toBe(false)
+  })
+})
+
+describe("UpdateTodoRequestSchema", () => {
+  it.each([
+    ["only description", { description: "Buy milk" }],
+    ["only completed", { completed: true }],
+    ["completed: false", { completed: false }],
+    ["both keys", { description: "x", completed: true }],
+    ["an empty description (the service checks length)", { description: "" }],
+  ])("accepts %s", (_name, body) => {
+    expect(UpdateTodoRequestSchema.parse(body)).toEqual(body)
+  })
+
+  it("rejects {} with one root-level custom issue", () => {
+    const result = UpdateTodoRequestSchema.safeParse({})
+    expect(result.success).toBe(false)
+    expect(result.error?.issues).toHaveLength(1)
+    expect(result.error?.issues[0]).toMatchObject({ code: "custom", path: [] })
+  })
+
+  it.each([
+    ["a null completed", { completed: null }, "completed"],
+    ["a null description", { description: null }, "description"],
+    ["a string completed", { completed: "true" }, "completed"],
+    ["a numeric description", { description: 1 }, "description"],
+  ])("rejects %s", (_name, body, field) => {
+    const result = UpdateTodoRequestSchema.safeParse(body)
+    expect(result.success).toBe(false)
+    expect(result.error?.issues[0]).toMatchObject({
+      code: "invalid_type",
+      path: [field],
+    })
+  })
+
+  it("rejects unknown keys, including client timestamps", () => {
+    const result = UpdateTodoRequestSchema.safeParse({
+      completed: true,
+      createdAt: "2026-09-24T09:14:00.000Z",
+    })
+    expect(result.success).toBe(false)
+    expect(result.error?.issues).toHaveLength(1)
+    expect(result.error?.issues[0]).toMatchObject({
+      code: "unrecognized_keys",
+      keys: ["createdAt"],
+    })
   })
 })

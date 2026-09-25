@@ -1,8 +1,11 @@
 import {
   CreateTodoRequestSchema,
+  TODO_PATH,
   TODOS_PATH,
+  TodoIdParamsSchema,
   TodoListResponseSchema,
   TodoSchema,
+  UpdateTodoRequestSchema,
 } from "@todos/shared"
 import type { FastifyPluginAsyncZod } from "@fastify/type-provider-zod"
 
@@ -35,6 +38,28 @@ export function todoRoutes(deps: {
           request.body
         )
         return reply.code(created ? 201 : 200).send(todo)
+      }
+    )
+
+    app.patch(
+      TODO_PATH,
+      {
+        schema: {
+          params: TodoIdParamsSchema,
+          body: UpdateTodoRequestSchema,
+          response: { 200: TodoSchema },
+        },
+      },
+      async (request) =>
+        deps.todoService.update(request.ctx, request.params.id, request.body)
+    )
+
+    app.delete(
+      TODO_PATH,
+      { schema: { params: TodoIdParamsSchema } },
+      async (request, reply) => {
+        await deps.todoService.delete(request.ctx, request.params.id)
+        return reply.code(204).send()
       }
     )
   }
