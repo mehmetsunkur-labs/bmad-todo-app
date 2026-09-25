@@ -1,6 +1,10 @@
 # Base topology shared by dev and the production-like stack (AD-10).
+# Production-like stack: `docker compose -f compose.yaml up -d` (nginx serving
+# the built SPA, the production API, PostgreSQL; only web publishes a port).
+# After pulling or changing code, use `up -d --build`, or the old images run.
 # `docker compose up` also loads compose.override.yaml (the dev stack).
-# Not runnable on its own until Story 3.1 adds the production image stages.
+# Each mode tags its own images (:prod here, :dev in the override), so one
+# mode never reuses the other's build.
 name: todos
 
 services:
@@ -22,6 +26,7 @@ services:
       start_period: 10s
 
   api:
+    image: todos-api:prod
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -48,6 +53,7 @@ services:
       start_period: 20s
 
   web:
+    image: todos-web:prod
     build:
       context: .
       dockerfile: apps/web/Dockerfile

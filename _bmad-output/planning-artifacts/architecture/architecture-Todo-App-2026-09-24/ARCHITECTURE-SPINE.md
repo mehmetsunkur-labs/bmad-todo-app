@@ -161,7 +161,7 @@ Arrows are the only allowed import directions. `apps/web` and `apps/api` never i
 - **Binds:** NFR-5, NFR-7, NFR-11
 - **Prevents:** CORS configuration, hard-coded API hosts, and prefix-stripping mismatches between dev and the compose stack.
 - **Rule:** The browser only ever calls **relative** `/api/v1/...` paths. The API enables no CORS, and the web build contains no API base URL. Both proxies forward the path **unchanged**:
-  - **In the compose stack:** the `web` container's nginx serves the static Vite build, with an SPA fallback of `try_files $uri /index.html`. It reverse-proxies `location /api/` with `proxy_pass http://api:3000;` (no URI part, so the prefix is kept). This nginx is the web container's static server, not an edge, TLS, or separate proxy service.
+  - **In the compose stack:** the `web` container's nginx serves the static Vite build, with an SPA fallback of `try_files $uri /index.html`. It reverse-proxies `location /api/` with `resolver 127.0.0.11 valid=10s ipv6=off; set $api_upstream http://api:3000; proxy_pass $api_upstream;`. There is no URI part, so the prefix is kept. Because `proxy_pass` uses a variable, nginx re-resolves `api` through Docker's embedded DNS at request time instead of pinning the IP it resolved at startup; a recreated `api` container with a new IP must not leave the proxy returning 502. This nginx is the web container's static server, not an edge, TLS, or separate proxy service.
   - **In development:** the Vite dev server proxies `/api` to the API with no path rewrite.
 
 ### AD-10 — Configuration via environment, one compose topology
