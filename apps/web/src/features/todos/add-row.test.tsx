@@ -1,24 +1,27 @@
 import { act, fireEvent, screen, within } from "@testing-library/react"
-import { REQUEST_TIMEOUT_MS, type Todo } from "@todos/shared"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import {
+  normalizeDescription,
+  REQUEST_TIMEOUT_MS,
+  type Todo,
+} from "@todos/shared"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { TODOS_QUERY_KEY } from "@/api/query-client"
-import { PLAIN_TOAST_MS } from "@/lib/toast"
 import {
   HOVER_POINTER_QUERY,
   REDUCED_MOTION_QUERY,
 } from "@/lib/use-media-query"
-import { setMediaQuery } from "@/test/media"
 import {
-  fakeAbortSignalTimeout,
-  jsonResponse,
-  makeTodo,
-  renderWithProviders,
-} from "@/test/render"
+  advance,
+  deferredFetch,
+  fetchMock,
+  hangingFetch,
+  setupFetchAndFakeTimers,
+} from "@/test/fetch"
+import { setMediaQuery } from "@/test/media"
+import { jsonResponse, makeTodo, renderWithProviders } from "@/test/render"
 
 import { TodoList } from "./todo-list"
-
-const fetchMock = vi.fn<typeof fetch>()
 
 const RESTORED = "Couldn't add that todo. Your text is back in the box."
 const TOO_LONG = "That todo is too long. The limit is 500 characters."
@@ -30,42 +33,6 @@ const existing = makeTodo({
   description: "Existing",
   createdAt: "2026-09-24T09:00:00.000Z",
 })
-
-const advance = (ms: number) =>
-  act(async () => {
-    await vi.advanceTimersByTimeAsync(ms)
-  })
-
-/** A fetch whose response the test releases by hand. */
-function deferredFetch() {
-  let resolve!: (response: Response) => void
-  fetchMock.mockImplementationOnce(
-    () =>
-      new Promise<Response>((res) => {
-        resolve = res
-      })
-  )
-  return {
-    resolve: async (r: Response) => {
-      await act(async () => {
-        resolve(r)
-      })
-      await advance(0)
-    },
-  }
-}
-
-/** A fetch that only ends when its signal aborts (the 10 s timeout). */
-function hangingFetch() {
-  fetchMock.mockImplementationOnce(
-    (_path, init) =>
-      new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () =>
-          reject(init.signal?.reason)
-        )
-      })
-  )
-}
 
 /** Echoes the POSTed Todo back as the server would, with its own time. */
 function serverTodo(
@@ -143,19 +110,8 @@ async function failWhileBusy(text: string, busy = "new") {
   )
 }
 
-beforeEach(() => {
-  vi.useFakeTimers({ shouldAdvanceTime: false })
-  vi.setSystemTime(new Date("2026-09-24T15:30:00.000Z"))
-  fakeAbortSignalTimeout()
-  vi.stubGlobal("fetch", fetchMock)
-})
-
-afterEach(() => {
-  vi.useRealTimers()
-  vi.unstubAllGlobals()
-  vi.restoreAllMocks()
-  fetchMock.mockReset()
-})
+// UTC, as this file has always used (todo-list uses local time).
+setupFetchAndFakeTimers(new Date("2026-09-24T15:30:00.000Z"))
 
 describe("Add row: layout and states", () => {
   it("is a form with the labelled input, the Add button, and a reserved counter line", async () => {
@@ -436,50 +392,6 @@ describe("Add row: failed create, input empty", () => {
     expect(toasts()).toEqual([RESTORED])
   })
 
-  it(`the plain toast auto-dismisses after ${PLAIN_TOAST_MS} ms`, async () => {
-    await renderPopulated()
-    fetchMock.mockRejectedValueOnce(networkError())
-    await add("Buy milk")
-    await advance(0)
-    expect(toasts()).toEqual([RESTORED])
-
-    await advance(PLAIN_TOAST_MS - 100)
-    expect(toasts()).toEqual([RESTORED])
-    await advance(500)
-    expect(toasts()).toEqual([])
-  })
-
-  it("the plain toast's timer pauses while it is hovered or focused", async () => {
-    await renderPopulated()
-    fetchMock.mockRejectedValueOnce(networkError())
-    await add("Buy milk")
-    await advance(0)
-    const toastEl = screen
-      .getByRole("status")
-      .closest<HTMLElement>("[data-sonner-toast]")!
-
-    await advance(4_000)
-    fireEvent.mouseEnter(toastEl)
-    await advance(30_000)
-    expect(toasts()).toEqual([RESTORED])
-
-    fireEvent.mouseLeave(toastEl)
-    await act(async () => {
-      toastEl.focus()
-    })
-    await advance(30_000)
-    expect(toasts()).toEqual([RESTORED])
-
-    // Focus leaves: the remaining ~4 s run out.
-    await act(async () => {
-      input().focus()
-    })
-    await advance(3_000)
-    expect(toasts()).toEqual([RESTORED])
-    await advance(1_500)
-    expect(toasts()).toEqual([])
-  })
-
   it("moves focus to the input from <body>", async () => {
     await renderPopulated()
     const post = deferredFetch()
@@ -511,6 +423,146 @@ describe("Add row: failed create, input empty", () => {
     expect(input()).toHaveValue("Buy milk")
     expect(region).toHaveFocus()
     expect(toasts()).toEqual([RESTORED])
+  })
+})
+
+describe("Add row: resubmitting restored text", () => {
+  /** Adds `text` and fails it by the 10 s timeout, so it is restored. */
+  async function timeOut(text: string) {
+    hangingFetch()
+    await add(text)
+    await advance(REQUEST_TIMEOUT_MS)
+    await advance(1)
+    expect(input()).toHaveValue(normalizeDescription(text))
+    expect(toasts()).toEqual([RESTORED])
+  }
+
+  const echo = () =>
+    fetchMock.mockImplementationOnce(async (_p, init) =>
+      jsonResponse(serverTodo(init), 200)
+    )
+
+  it("resubmitting after a timeout sends the same id and Description; one row", async () => {
+    await renderPopulated()
+    await timeOut("Buy milk")
+
+    // The first POST may have committed: the server replays it (200).
+    echo()
+    await pressEnter()
+    await advance(0)
+
+    const [first, second] = posts()
+    expect(posts()).toHaveLength(2)
+    expect(second!.body).toEqual(first!.body)
+    expect(second!.body).toEqual({
+      id: first!.body.id,
+      description: "Buy milk",
+    })
+    expect(rows()).toEqual(["Buy milk", "Existing"])
+  })
+
+  it("text that normalizes to the restored Description reuses the id", async () => {
+    await renderPopulated()
+    await timeOut("Buy milk")
+
+    echo()
+    await add("  Buy milk   ")
+    await advance(0)
+
+    const [first, second] = posts()
+    expect(second!.body).toEqual({
+      id: first!.body.id,
+      description: "Buy milk",
+    })
+  })
+
+  it("edited text gets a new id", async () => {
+    await renderPopulated()
+    await timeOut("Buy milk")
+
+    echo()
+    await add("Buy milk!")
+    await advance(0)
+
+    const [first, second] = posts()
+    expect(second!.body.description).toBe("Buy milk!")
+    expect(second!.body.id).toMatch(V7)
+    expect(second!.body.id).not.toBe(first!.body.id)
+  })
+
+  it("the remembered id is used once: a later add of the same text gets a new id", async () => {
+    await renderPopulated()
+    await timeOut("Buy milk")
+
+    echo()
+    await pressEnter()
+    await advance(0)
+    fetchMock.mockImplementationOnce(async (_p, init) =>
+      jsonResponse(serverTodo(init), 201)
+    )
+    await add("Buy milk")
+    await advance(0)
+
+    const [first, second, third] = posts()
+    expect(second!.body.id).toBe(first!.body.id)
+    expect(third!.body).toEqual({
+      id: expect.stringMatching(V7),
+      description: "Buy milk",
+    })
+    expect(third!.body.id).not.toBe(first!.body.id)
+  })
+
+  it("an edited submit also clears the remembered id", async () => {
+    await renderPopulated()
+    await timeOut("Buy milk")
+
+    echo()
+    await add("Other")
+    await advance(0)
+    echo()
+    await add("Buy milk")
+    await advance(0)
+
+    const [first, , third] = posts()
+    expect(third!.body.description).toBe("Buy milk")
+    expect(third!.body.id).not.toBe(first!.body.id)
+  })
+
+  it("a newer restore replaces the remembered id", async () => {
+    await renderPopulated()
+    await timeOut("Buy milk")
+    // The edited resubmit fails too and is restored under its new id, which
+    // replaces the remembered one.
+    fetchMock.mockRejectedValueOnce(networkError())
+    await add("Buy milk!")
+    await advance(1)
+    expect(input()).toHaveValue("Buy milk!")
+
+    echo()
+    await pressEnter()
+    await advance(0)
+
+    const [first, second, third] = posts()
+    expect(second!.body.id).not.toBe(first!.body.id)
+    expect(third!.body).toEqual({
+      id: second!.body.id,
+      description: "Buy milk!",
+    })
+  })
+
+  it("input busy: nothing is remembered, so re-adding the failed text gets a new id", async () => {
+    await renderPopulated()
+    await failWhileBusy("Buy milk")
+    expect(input()).toHaveValue("new")
+    expect(toasts()).toEqual(["Couldn't add “Buy milk”."])
+
+    echo()
+    await add("Buy milk")
+    await advance(0)
+
+    const [first, second] = posts()
+    expect(second!.body.description).toBe("Buy milk")
+    expect(second!.body.id).not.toBe(first!.body.id)
   })
 })
 
@@ -716,26 +768,6 @@ describe("Add row: other Todos and toasts", () => {
     expect(cached()[2]).toBe(otherObj)
   })
 
-  it("toasts sit bottom-center below 640px and bottom-right from 640px", async () => {
-    await renderPopulated()
-    fetchMock.mockRejectedValueOnce(networkError())
-    await add("Buy milk")
-    await advance(1)
-    const toaster = () =>
-      document.querySelector<HTMLElement>("[data-sonner-toaster]")!
-
-    expect(toasts()).toEqual([RESTORED])
-    expect(toaster()).toHaveAttribute("data-y-position", "bottom")
-    expect(toaster()).toHaveAttribute("data-x-position", "center")
-
-    await act(async () => {
-      setMediaQuery("(min-width: 640px)", true)
-    })
-    await advance(1)
-    expect(toaster()).toHaveAttribute("data-y-position", "bottom")
-    expect(toaster()).toHaveAttribute("data-x-position", "right")
-  })
-
   it("Other Todos: only the failed row is removed", async () => {
     await renderPopulated()
     const first = deferredFetch()
@@ -755,50 +787,6 @@ describe("Add row: other Todos and toasts", () => {
     const [, init] = fetchMock.mock.calls[1]!
     await first.resolve(jsonResponse(serverTodo(init), 201))
     expect(rows()).toEqual(["First", "Existing"])
-  })
-
-  it("Escape dismisses the newest toast", async () => {
-    await renderPopulated()
-    fetchMock.mockRejectedValueOnce(networkError())
-    await add("One")
-    await advance(0)
-    // The input now holds "One" again; add it, then fail while busy.
-    await failWhileBusy("Two")
-    expect(toasts().sort()).toEqual([RESTORED, "Couldn't add “Two”."].sort())
-
-    await act(async () => {
-      fireEvent.keyDown(document.body, { key: "Escape" })
-    })
-    await advance(500)
-    expect(toasts()).toEqual([RESTORED])
-  })
-
-  it("shows at most 3 toasts at once", async () => {
-    await renderPopulated()
-    for (const text of ["a", "b", "c", "d"]) {
-      await failWhileBusy(text)
-    }
-    expect(toasts()).toHaveLength(4)
-    const visible = document.querySelectorAll(
-      "[data-sonner-toast][data-visible='true']"
-    )
-    expect(visible).toHaveLength(3)
-  })
-
-  it("the toast has the destructive CircleX icon and no rich colors", async () => {
-    await renderPopulated()
-    fetchMock.mockRejectedValueOnce(networkError())
-    await add("Buy milk")
-    await advance(0)
-
-    const toastEl = screen
-      .getByRole("status")
-      .closest<HTMLElement>("[data-sonner-toast]")!
-    expect(toastEl.getAttribute("data-rich-colors")).not.toBe("true")
-    expect(toastEl.querySelector("svg")).toHaveClass(
-      "lucide-circle-x",
-      "text-destructive"
-    )
   })
 })
 

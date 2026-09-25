@@ -1,12 +1,13 @@
-import {
-  TodoListResponseSchema,
-  TodoSchema,
-  type ErrorDetail,
-} from "@todos/shared"
-import type { LightMyRequestResponse } from "fastify"
+import { TodoListResponseSchema, TodoSchema } from "@todos/shared"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 
-import { createTestApp, truncateTodos, type TestApp } from "./helpers"
+import {
+  CONFLICT_BODY,
+  createTestApp,
+  expectValidationError,
+  truncateTodos,
+  type TestApp,
+} from "./helpers"
 
 const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 
@@ -110,15 +111,6 @@ describe("GET /api/v1/todos", () => {
 describe("POST /api/v1/todos", () => {
   const url = "/api/v1/todos"
   const ID = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
-  const VALIDATION_BODY = {
-    error: { code: "VALIDATION_ERROR", message: "The request is invalid." },
-  }
-  const CONFLICT_BODY = {
-    error: {
-      code: "CONFLICT",
-      message: "The request conflicts with the stored resource.",
-    },
-  }
 
   let t: TestApp
   beforeAll(() => {
@@ -141,20 +133,6 @@ describe("POST /api/v1/todos", () => {
       created_at: Date
       updated_at: Date
     }[]
-  }
-
-  function expectValidationError(
-    res: LightMyRequestResponse,
-    status: number,
-    details?: ErrorDetail[]
-  ) {
-    expect(res.statusCode).toBe(status)
-    expect(res.headers["content-type"]).toMatch(/^application\/json/)
-    expect(res.json()).toEqual(
-      details
-        ? { error: { ...VALIDATION_BODY.error, details } }
-        : VALIDATION_BODY
-    )
   }
 
   it("creates a Todo: 201, normalized Description, DB-clock timestamps, one row", async () => {
@@ -388,12 +366,15 @@ describe("POST /api/v1/todos", () => {
       expect(await rows()).toHaveLength(0)
     })
 
-    it("text/plain → 415", async () => {
+    it.each([
+      ["text/plain", JSON.stringify({ id: ID, description: "x" })],
+      ["application/xml", "<description>hi</description>"],
+    ])("%s → 415", async (contentType, payload) => {
       const res = await t.app.inject({
         method: "POST",
         url,
-        headers: { "content-type": "text/plain" },
-        payload: JSON.stringify({ id: ID, description: "x" }),
+        headers: { "content-type": contentType },
+        payload,
       })
       expectValidationError(res, 415)
       expect(await rows()).toHaveLength(0)

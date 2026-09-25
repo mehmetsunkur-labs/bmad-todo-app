@@ -1,70 +1,28 @@
 import { onlineManager } from "@tanstack/react-query"
 import { act, fireEvent, screen, within } from "@testing-library/react"
 import { REQUEST_TIMEOUT_MS } from "@todos/shared"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
 
 import { getTodoSync } from "@/api/todo-sync"
 import {
-  fakeAbortSignalTimeout,
-  jsonResponse,
-  makeTodo,
-  renderWithProviders,
-} from "@/test/render"
+  advance,
+  deferredFetch as makeDeferredFetch,
+  fetchMock,
+  hangingFetch,
+  setupFetchAndFakeTimers,
+} from "@/test/fetch"
+import { jsonResponse, makeTodo, renderWithProviders } from "@/test/render"
 
 import { TodoList } from "./todo-list"
 
-const fetchMock = vi.fn<typeof fetch>()
-
-/** A fetch whose response the test releases by hand. */
-function deferredFetch() {
-  let resolve!: (response: Response) => void
-  fetchMock.mockImplementationOnce(
-    () =>
-      new Promise<Response>((res) => {
-        resolve = res
-      })
-  )
-  return {
-    resolve: (r: Response) =>
-      act(async () => {
-        resolve(r)
-        await vi.advanceTimersByTimeAsync(0)
-      }),
-  }
-}
-
-/** A fetch that only ends when its signal aborts (the 10 s timeout). */
-function hangingFetch() {
-  fetchMock.mockImplementationOnce(
-    (_path, init) =>
-      new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () =>
-          reject(init.signal?.reason)
-        )
-      })
-  )
-}
+/** A fetch whose response the test releases by hand (flushed in the same act). */
+const deferredFetch = () => makeDeferredFetch({ flushInSameAct: true })
 
 const skeletons = () => screen.queryAllByTestId("todo-skeleton")
 const list = () => screen.queryByRole("list", { name: "Todos" })
-const advance = (ms: number) =>
-  act(async () => {
-    await vi.advanceTimersByTimeAsync(ms)
-  })
 
-beforeEach(() => {
-  vi.useFakeTimers({ shouldAdvanceTime: false })
-  vi.setSystemTime(new Date(2026, 8, 24, 15, 30, 0))
-  fakeAbortSignalTimeout()
-  vi.stubGlobal("fetch", fetchMock)
-})
-
-afterEach(() => {
-  vi.useRealTimers()
-  vi.unstubAllGlobals()
-  vi.restoreAllMocks()
-  fetchMock.mockReset()
-})
+// Local wall-clock time, as this file has always used (add-row uses UTC).
+setupFetchAndFakeTimers(new Date(2026, 8, 24, 15, 30, 0))
 
 describe("TodoList: List States", () => {
   it("fast load: data before 300 ms never renders the skeleton", async () => {
