@@ -25,6 +25,8 @@ export default defineConfig([
     "_bmad",
     "_bmad-output",
     ".claude",
+    "e2e/test-results",
+    "e2e/playwright-report",
   ]),
   {
     files: ["**/*.{ts,tsx,js}"],
@@ -38,6 +40,13 @@ export default defineConfig([
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
+    },
+  },
+  {
+    // Playwright suite: runs in Node, with page.evaluate callbacks in the browser.
+    files: ["e2e/**/*.{ts,mjs}"],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser },
     },
   },
   {

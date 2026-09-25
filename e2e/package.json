@@ -2,5 +2,14 @@
   "name": "@todos/e2e",
   "version": "0.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "test:e2e": "node scripts/run-e2e.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "~1.63.0",
+    "@types/node": "^24.13.6",
+    "uuid": "~14.0.2"
+  }
 }
