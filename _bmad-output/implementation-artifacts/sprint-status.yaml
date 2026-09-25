@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-24-2026 16:33
-last_updated: 09-25-2026 14:55
+last_updated: 09-25-2026 15:27
 project: Todo-App
 project_key: NOKEY
 tracking_system: file-system
@@ -47,7 +47,7 @@ development_status:
   2-2-complete-and-un-complete-a-todo: done
   2-3-delete-a-todo: done
   2-4-edit-a-todo-s-description-inline: done
-  epic-2-retrospective: optional
+  epic-2-retrospective: done
 
   epic-3: backlog
   3-1-run-the-production-like-stack-on-one-host-and-use-it-from-my: backlog
@@ -97,7 +97,7 @@ action_items:
     action: "Every UI story runs a Playwright check against the dev stack before merge
       (P1)"
     owner: "Msunkur"
-    status: open
+    status: in-progress
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-25.md"
   - id: "epic-1-retro-item-7-run-the-walkthrough-incl-detail-pass-and"
     epic: 1
@@ -113,3 +113,64 @@ action_items:
     owner: "PM + Architect"
     status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-25.md"
+  - id: "epic-2-retro-item-9-give-the-inline-edit-field-a-visible-foc"
+    epic: 2
+    action: "Give the inline edit field a visible focus-ring indicator (drop focus-visible:ring-0
+      or add the 2px outline) with a test/browser check (F2)"
+    owner: "Dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
+  - id: "epic-2-retro-item-10-focus-after-removal-for-any-removed-focu"
+    epic: 2
+    action: "Focus-after-removal for any removed focused row (PATCH 404 on toggle/edit,
+      failed create with queued write), reusing 2.3 next/previous/Add; treat the list
+      region as free focus; retire deferred-work 404 entry (F3)"
+    owner: "Dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
+  - id: "epic-2-retro-item-11-acknowledge-a-delete-dropped-behind-a-fa"
+    epic: 2
+    action: "Acknowledge a delete dropped behind a failed write: delete-failure copy
+      and focus restore instead of reopening edit or restoring Add text; pin 500 and
+      404 variants; reconcile FR-10 wording (F1)"
+    owner: "Dev + PM"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
+  - id: "epic-2-retro-item-12-resolve-dropped-hand-offs-loading-skelet"
+    epic: 2
+    action: "Resolve dropped hand-offs: Loading skeleton row shape (or amend DESIGN.md/UX-DR11),
+      wire-contract fixture for PATCH/DELETE, log oncancel and Vite shared-watch gap
+      in deferred-work (F4, P5)"
+    owner: "Dev + PM"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
+  - id: "epic-2-retro-item-13-before-more-ui-work-extract-todolist-edi"
+    epic: 2
+    action: "Before more UI work: extract TodoList edit state machine and focus handling
+      into hooks, one useTodoMutation factory, route 404-as-deleted via failureState,
+      neutral copy module, shared web test helpers (F5, F6, F7)"
+    owner: "Dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
+  - id: "epic-2-retro-item-14-apply-epic-2-spec-reconciliations-f9-1-f"
+    epic: 2
+    action: "Apply Epic 2 spec reconciliations F9.1-F9.7 to ARCHITECTURE-SPINE, EXPERIENCE,
+      DESIGN, epics.md and epic-2-context (F9)"
+    owner: "PM + Architect"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
+  - id: "epic-2-retro-item-15-seed-story-3-3-playwright-suite-from-the"
+    epic: 2
+    action: "Seed Story 3.3 Playwright suite from the Epic 2 browser checks (toggle,
+      delete, edit, cross-story flow) (P1)"
+    owner: "Dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
+  - id: "epic-2-retro-item-16-planning-write-cross-story-hand-offs-int"
+    epic: 2
+    action: "Planning: write cross-story hand-offs into deferred-work.md or the target
+      story ACs; keep specs within size by splitting motion/focus concerns; never
+      assume focus/blur event order (F4, P3, P4)"
+    owner: "PM + Architect"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
