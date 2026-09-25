@@ -45,6 +45,32 @@ export const CreateTodoRequestSchema = z.strictObject({
 export type CreateTodoRequest = z.infer<typeof CreateTodoRequestSchema>
 
 /**
+ * Route params for `/api/v1/todos/:id`. Any UUID version or case; PostgreSQL
+ * returns the canonical lowercase form.
+ */
+export const TodoIdParamsSchema = z.strictObject({
+  id: z.uuid(),
+})
+export type TodoIdParams = z.infer<typeof TodoIdParamsSchema>
+
+/**
+ * `PATCH /api/v1/todos/:id` body. Strict, and at least one key must be
+ * present; a missing key means "unchanged" and `null` is never accepted. Only
+ * the shape is checked here; the service normalizes and validates the
+ * Description exactly as for create.
+ */
+export const UpdateTodoRequestSchema = z
+  .strictObject({
+    description: z.string().optional(),
+    completed: z.boolean().optional(),
+  })
+  .refine(
+    (body) => body.description !== undefined || body.completed !== undefined,
+    { message: "At least one of description or completed is required." }
+  )
+export type UpdateTodoRequest = z.infer<typeof UpdateTodoRequestSchema>
+
+/**
  * The single Description normalization (AD-3): each `\r\n`, `\r`, or `\n`
  * becomes one space, then the result is trimmed.
  */

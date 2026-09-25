@@ -4,11 +4,12 @@ import {
   type CreateTodoRequest,
   type ErrorReason,
   type Todo,
+  type UpdateTodoRequest,
 } from "@todos/shared"
 
 import type { RequestContext } from "../context"
 import { AppError } from "../errors"
-import type { TodoRepository } from "../repositories/todo-repository"
+import type { TodoPatch, TodoRepository } from "../repositories/todo-repository"
 
 export interface TodoService {
   /** Every Todo, ordered by `compareTodos`. */
@@ -22,6 +23,19 @@ export interface TodoService {
     ctx: RequestContext,
     input: CreateTodoRequest
   ): Promise<{ todo: Todo; created: boolean }>
+  /**
+   * Partial update in one write. A present Description is normalized and
+   * validated as in create (`VALIDATION_ERROR` on `description`, nothing
+   * written). `updatedAt` moves only when a stored value changes; a no-op
+   * returns the stored Todo unchanged. Unknown `id` throws `NOT_FOUND`.
+   */
+  update(
+    ctx: RequestContext,
+    id: string,
+    input: UpdateTodoRequest
+  ): Promise<Todo>
+  /** Deletes the Todo in one write. Unknown `id` throws `NOT_FOUND`. */
+  delete(ctx: RequestContext, id: string): Promise<void>
 }
 
 // Text PostgreSQL can't store verbatim: NUL fails the insert (22021) and a
@@ -41,6 +55,18 @@ function descriptionError(description: string): ErrorReason | undefined {
   return undefined
 }
 
+/** Normalizes a raw Description, or throws the create/update validation error. */
+function validDescription(raw: string): string {
+  const description = normalizeDescription(raw)
+  const reason = descriptionError(description)
+  if (reason) {
+    throw new AppError("VALIDATION_ERROR", {
+      details: [{ field: "description", reason }],
+    })
+  }
+  return description
+}
+
 export function createTodoService(deps: {
   todoRepository: TodoRepository
 }): TodoService {
@@ -52,14 +78,7 @@ export function createTodoService(deps: {
     },
 
     async create(ctx, input) {
-      const description = normalizeDescription(input.description)
-      const reason = descriptionError(description)
-      if (reason) {
-        throw new AppError("VALIDATION_ERROR", {
-          details: [{ field: "description", reason }],
-        })
-      }
-
+      const description = validDescription(input.description)
       const values = { id: input.id, description }
       const inserted = await repo.create(ctx, values)
       if (inserted) return { todo: inserted, created: true }
@@ -75,6 +94,29 @@ export function createTodoService(deps: {
       const retried = await repo.create(ctx, values)
       if (retried) return { todo: retried, created: true }
       throw new AppError("INTERNAL")
+    },
+
+    async update(ctx, id, input) {
+      const patch: TodoPatch = {}
+      if (input.description !== undefined) {
+        patch.description = validDescription(input.description)
+      }
+      if (input.completed !== undefined) patch.completed = input.completed
+      if (patch.description === undefined && patch.completed === undefined) {
+        // The request schema already rejects `{}`; never issue an empty write.
+        throw new AppError("VALIDATION_ERROR", {
+          details: [{ field: "", reason: "invalid" }],
+        })
+      }
+
+      const updated = await repo.update(ctx, id, patch)
+      if (!updated) throw new AppError("NOT_FOUND")
+      return updated
+    },
+
+    async delete(ctx, id) {
+      const deleted = await repo.delete(ctx, id)
+      if (!deleted) throw new AppError("NOT_FOUND")
     },
   }
 }

@@ -1,15 +1,56 @@
-import { TodoListResponseSchema, TodoSchema } from "@todos/shared"
+import {
+  compareTodos,
+  TodoListResponseSchema,
+  TodoSchema,
+  type Todo,
+} from "@todos/shared"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 
 import {
   CONFLICT_BODY,
   createTestApp,
   expectValidationError,
+  NOT_FOUND_BODY,
   truncateTodos,
   type TestApp,
 } from "./helpers"
 
 const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+
+// Seeded single-Todo rows for the PATCH/DELETE suites: timestamps well in the
+// past, so any DB-clock bump is visibly later.
+const SEED_ID = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+const SEED_AT = "2026-09-24T09:00:00.123Z"
+const SEED_TODO: Todo = {
+  id: SEED_ID,
+  description: "Buy milk",
+  completed: false,
+  createdAt: SEED_AT,
+  updatedAt: SEED_AT,
+}
+const ABSENT_ID = "0199a1b2-c3d4-7e5f-8a9b-ffffffffffff"
+
+async function seedTodo(t: TestApp, todo: Todo = SEED_TODO): Promise<void> {
+  await t.pool.query(
+    `INSERT INTO todos (id, description, completed, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [todo.id, todo.description, todo.completed, todo.createdAt, todo.updatedAt]
+  )
+}
+
+/** Every stored row, raw, for "nothing changed" checks. */
+async function snapshot(t: TestApp): Promise<unknown[]> {
+  const { rows } = await t.pool.query(
+    `SELECT id, description, completed, created_at, updated_at FROM todos ORDER BY id`
+  )
+  return rows
+}
+
+async function listTodos(t: TestApp): Promise<Todo[]> {
+  const res = await t.app.inject({ method: "GET", url: "/api/v1/todos" })
+  expect(res.statusCode).toBe(200)
+  return res.json().todos
+}
 
 describe("GET /api/v1/todos", () => {
   let t: TestApp
@@ -379,6 +420,355 @@ describe("POST /api/v1/todos", () => {
       expectValidationError(res, 415)
       expect(await rows()).toHaveLength(0)
     })
+  })
+})
+
+describe("PATCH /api/v1/todos/:id", () => {
+  const url = `/api/v1/todos/${SEED_ID}`
+
+  let t: TestApp
+  beforeAll(() => {
+    t = createTestApp()
+  })
+  beforeEach(async () => {
+    await truncateTodos(t.pool)
+    await seedTodo(t)
+  })
+  afterAll(() => t.close())
+
+  const patch = (payload: unknown, target = url) =>
+    t.app.inject({ method: "PATCH", url: target, payload: payload as object })
+
+  it("toggle: 200, completed, Description kept, updatedAt bumped, createdAt kept", async () => {
+    const res = await patch({ completed: true })
+    expect(res.statusCode).toBe(200)
+    expect(res.headers["content-type"]).toMatch(/^application\/json/)
+    const body = res.json()
+    expect(body).toEqual({
+      ...SEED_TODO,
+      completed: true,
+      updatedAt: expect.stringMatching(ISO_MS),
+    })
+    expect(TodoSchema.parse(body)).toEqual(body)
+    expect(body.updatedAt > SEED_AT).toBe(true)
+
+    const back = await patch({ completed: false })
+    expect(back.statusCode).toBe(200)
+    expect(back.json()).toMatchObject({ completed: false, createdAt: SEED_AT })
+  })
+
+  it("edit: normalizes the Description and bumps updatedAt", async () => {
+    const res = await patch({ description: "  Buy\noat milk " })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body).toMatchObject({
+      id: SEED_ID,
+      description: "Buy oat milk",
+      completed: false,
+      createdAt: SEED_AT,
+    })
+    expect(body.updatedAt > SEED_AT).toBe(true)
+  })
+
+  it("both keys: applied in one write", async () => {
+    const res = await patch({ description: "x", completed: true })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({
+      description: "x",
+      completed: true,
+      createdAt: SEED_AT,
+    })
+    const [stored] = await listTodos(t)
+    expect(stored).toEqual(res.json())
+  })
+
+  it("updatedAt comes from the database clock", async () => {
+    const before = await t.pool.query<{ now: Date }>("SELECT now() AS now")
+    const res = await patch({ completed: true })
+    const after = await t.pool.query<{ now: Date }>("SELECT now() AS now")
+    const updatedAt = Date.parse(res.json().updatedAt)
+    expect(updatedAt).toBeGreaterThanOrEqual(
+      Math.floor(before.rows[0]!.now.getTime())
+    )
+    expect(updatedAt).toBeLessThanOrEqual(
+      Math.ceil(after.rows[0]!.now.getTime()) + 1
+    )
+  })
+
+  it.each([
+    ["the same Description", { description: "Buy milk" }],
+    [
+      "a Description equal after normalization",
+      { description: " Buy\r\nmilk\n" },
+    ],
+    ["the same completed", { completed: false }],
+    ["both keys equal", { description: "Buy milk", completed: false }],
+  ])(
+    "no-op (%s): 200, stored Todo byte-for-byte, updatedAt unchanged",
+    async (_name, payload) => {
+      const before = await snapshot(t)
+      const res = await patch(payload)
+      expect(res.statusCode).toBe(200)
+      expect(res.body).toBe(JSON.stringify(SEED_TODO))
+      expect(await snapshot(t)).toEqual(before)
+    }
+  )
+
+  it("a real change in one key bumps updatedAt even if the other key is unchanged", async () => {
+    const res = await patch({ description: "Buy milk", completed: true })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().updatedAt > SEED_AT).toBe(true)
+  })
+
+  it("accepts an upper-case id and returns the canonical lowercase id", async () => {
+    const res = await patch(
+      { completed: true },
+      `/api/v1/todos/${SEED_ID.toUpperCase()}`
+    )
+    expect(res.statusCode).toBe(200)
+    expect(res.json().id).toBe(SEED_ID)
+  })
+
+  it("empty body {} → 400 root invalid, no write", async () => {
+    const before = await snapshot(t)
+    const res = await patch({})
+    expectValidationError(res, 400, [{ field: "", reason: "invalid" }])
+    expect(await snapshot(t)).toEqual(before)
+  })
+
+  it.each([
+    ["completed", { completed: null }],
+    ["description", { description: null }],
+    ["completed", { completed: "true" }],
+    ["description", { description: 1 }],
+  ])("bad value for %s → 400 invalid, no write", async (field, payload) => {
+    const before = await snapshot(t)
+    const res = await patch(payload)
+    expectValidationError(res, 400, [{ field, reason: "invalid" }])
+    expect(await snapshot(t)).toEqual(before)
+  })
+
+  it("an unknown key (client timestamp) → 400 unknown_field, no write", async () => {
+    const before = await snapshot(t)
+    const res = await patch({
+      completed: true,
+      createdAt: "2026-09-25T09:14:00.000Z",
+    })
+    expectValidationError(res, 400, [
+      { field: "createdAt", reason: "unknown_field" },
+    ])
+    expect(await snapshot(t)).toEqual(before)
+  })
+
+  it.each([
+    ["empty", "   "],
+    ["empty", "\r\n"],
+    ["too_long", "x".repeat(501)],
+    ["too_long", `${"x".repeat(499)}😀`],
+    ["invalid", "a\u0000b"],
+    ["invalid", "a\ud800b"],
+  ] as const)(
+    "bad Description → 400 %s on description, no write",
+    async (reason, description) => {
+      const before = await snapshot(t)
+      const res = await patch({ description, completed: true })
+      expectValidationError(res, 400, [{ field: "description", reason }])
+      expect(await snapshot(t)).toEqual(before)
+    }
+  )
+
+  it("500 units after trimming → 200", async () => {
+    const res = await patch({ description: `  ${"x".repeat(500)}\n` })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().description).toBe("x".repeat(500))
+  })
+
+  it("unknown id → 404 NOT_FOUND, no write", async () => {
+    const before = await snapshot(t)
+    const res = await patch({ completed: true }, `/api/v1/todos/${ABSENT_ID}`)
+    expect(res.statusCode).toBe(404)
+    expect(res.headers["content-type"]).toMatch(/^application\/json/)
+    expect(res.json()).toEqual(NOT_FOUND_BODY)
+    expect(await snapshot(t)).toEqual(before)
+  })
+
+  it("malformed id → 400 id invalid, no write", async () => {
+    const before = await snapshot(t)
+    const res = await patch({ completed: true }, "/api/v1/todos/not-a-uuid")
+    expectValidationError(res, 400, [{ field: "id", reason: "invalid" }])
+    expect(await snapshot(t)).toEqual(before)
+  })
+
+  it("GET afterwards returns the PATCH response's Todo in the same position", async () => {
+    await seedTodo(t, {
+      ...SEED_TODO,
+      id: "0199a1b2-c3d4-7e5f-8a9b-000000000001",
+      description: "older",
+      createdAt: "2026-09-23T09:00:00.000Z",
+      updatedAt: "2026-09-23T09:00:00.000Z",
+    })
+    await seedTodo(t, {
+      ...SEED_TODO,
+      id: "0199a1b2-c3d4-7e5f-8a9b-000000000002",
+      description: "newer",
+      createdAt: "2026-09-25T09:00:00.000Z",
+      updatedAt: "2026-09-25T09:00:00.000Z",
+    })
+    const before = await listTodos(t)
+    const index = before.findIndex((todo) => todo.id === SEED_ID)
+    expect(index).toBe(1)
+
+    const res = await patch({ description: "edited", completed: true })
+    expect(res.statusCode).toBe(200)
+    const after = await listTodos(t)
+    expect(after[index]).toEqual(res.json())
+    expect(after.map((todo) => todo.id)).toEqual(before.map((todo) => todo.id))
+    expect([...after].sort(compareTodos)).toEqual(after)
+  })
+
+  it("concurrent PATCHes of different keys both apply", async () => {
+    const results = await Promise.all([
+      patch({ description: "Buy oat milk" }),
+      patch({ completed: true }),
+    ])
+    expect(results.map((r) => r.statusCode)).toEqual([200, 200])
+    const [stored] = await listTodos(t)
+    expect(stored).toMatchObject({
+      description: "Buy oat milk",
+      completed: true,
+      createdAt: SEED_AT,
+    })
+  })
+
+  it("concurrent PATCHes of the Description: both 200, one Description stored intact", async () => {
+    const a = "A".repeat(500)
+    const b = "B".repeat(500)
+    const results = await Promise.all([
+      patch({ description: a }),
+      patch({ description: b }),
+    ])
+    expect(results.map((r) => r.statusCode)).toEqual([200, 200])
+    const [stored] = await listTodos(t)
+    expect([a, b]).toContain(stored!.description)
+  })
+
+  it("sequential PATCHes of the Description: the second wins", async () => {
+    expect((await patch({ description: "first" })).statusCode).toBe(200)
+    const second = await patch({ description: "second" })
+    expect(second.statusCode).toBe(200)
+    expect(await listTodos(t)).toEqual([second.json()])
+  })
+
+  it("logs one request line with no Todo content", async () => {
+    t.logs.clear()
+    await patch({ description: "secret edit text" })
+    const lines = t.logs.requestLines()
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatchObject({
+      route: "/api/v1/todos/:id",
+      statusCode: 200,
+    })
+    expect(JSON.stringify(t.logs.lines)).not.toContain("secret edit text")
+  })
+})
+
+describe("DELETE /api/v1/todos/:id", () => {
+  const url = `/api/v1/todos/${SEED_ID}`
+
+  let t: TestApp
+  beforeAll(() => {
+    t = createTestApp()
+  })
+  beforeEach(async () => {
+    await truncateTodos(t.pool)
+    await seedTodo(t)
+  })
+  afterAll(() => t.close())
+
+  const del = (target = url) => t.app.inject({ method: "DELETE", url: target })
+
+  it("deletes: 204, empty body, gone from GET", async () => {
+    const res = await del()
+    expect(res.statusCode).toBe(204)
+    expect(res.body).toBe("")
+    expect(await listTodos(t)).toEqual([])
+    expect(await snapshot(t)).toEqual([])
+  })
+
+  it("deletes only the addressed Todo, by any id case", async () => {
+    const other = { ...SEED_TODO, id: "0199a1b2-c3d4-7e5f-8a9b-000000000001" }
+    await seedTodo(t, other)
+    const res = await del(`/api/v1/todos/${SEED_ID.toUpperCase()}`)
+    expect(res.statusCode).toBe(204)
+    expect(await listTodos(t)).toEqual([other])
+  })
+
+  it("unknown id → 404 NOT_FOUND, no write", async () => {
+    const before = await snapshot(t)
+    const res = await del(`/api/v1/todos/${ABSENT_ID}`)
+    expect(res.statusCode).toBe(404)
+    expect(res.headers["content-type"]).toMatch(/^application\/json/)
+    expect(res.json()).toEqual(NOT_FOUND_BODY)
+    expect(await snapshot(t)).toEqual(before)
+  })
+
+  it("a second DELETE of the same id → 404", async () => {
+    expect((await del()).statusCode).toBe(204)
+    const again = await del()
+    expect(again.statusCode).toBe(404)
+    expect(again.json()).toEqual(NOT_FOUND_BODY)
+  })
+
+  it("malformed id → 400 id invalid, no write", async () => {
+    const before = await snapshot(t)
+    const res = await del("/api/v1/todos/not-a-uuid")
+    expectValidationError(res, 400, [{ field: "id", reason: "invalid" }])
+    expect(await snapshot(t)).toEqual(before)
+  })
+})
+
+describe("create replay once edit and delete exist", () => {
+  let t: TestApp
+  beforeAll(() => {
+    t = createTestApp()
+  })
+  beforeEach(() => truncateTodos(t.pool))
+  afterAll(() => t.close())
+
+  const create = () =>
+    t.app.inject({
+      method: "POST",
+      url: "/api/v1/todos",
+      payload: { id: SEED_ID, description: "Buy milk" },
+    })
+
+  it("replay after an edit → 409 CONFLICT, row unchanged", async () => {
+    expect((await create()).statusCode).toBe(201)
+    const edit = await t.app.inject({
+      method: "PATCH",
+      url: `/api/v1/todos/${SEED_ID}`,
+      payload: { description: "Buy oat milk" },
+    })
+    expect(edit.statusCode).toBe(200)
+    const before = await snapshot(t)
+
+    const replay = await create()
+    expect(replay.statusCode).toBe(409)
+    expect(replay.json()).toEqual(CONFLICT_BODY)
+    expect(await snapshot(t)).toEqual(before)
+  })
+
+  it("replay after a delete → 201, the row exists again", async () => {
+    expect((await create()).statusCode).toBe(201)
+    const removed = await t.app.inject({
+      method: "DELETE",
+      url: `/api/v1/todos/${SEED_ID}`,
+    })
+    expect(removed.statusCode).toBe(204)
+
+    const replay = await create()
+    expect(replay.statusCode).toBe(201)
+    expect(await listTodos(t)).toEqual([replay.json()])
   })
 })
 

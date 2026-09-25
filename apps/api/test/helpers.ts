@@ -102,6 +102,12 @@ export const CONFLICT_BODY = {
     message: "The request conflicts with the stored resource.",
   },
 }
+export const NOT_FOUND_BODY = {
+  error: {
+    code: "NOT_FOUND",
+    message: "The requested resource was not found.",
+  },
+}
 
 /** A JSON `VALIDATION_ERROR` envelope with `status`, and exactly `details` if given. */
 export function expectValidationError(
