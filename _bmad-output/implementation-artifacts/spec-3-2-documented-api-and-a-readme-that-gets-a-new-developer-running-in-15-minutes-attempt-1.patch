@@ -1,0 +1,2385 @@
+diff --git a/.prettierignore b/.prettierignore
+index 0c67d87..752b982 100644
+--- a/.prettierignore
++++ b/.prettierignore
+@@ -7,3 +7,4 @@ _bmad/
+ _bmad-output/
+ .claude/
+ apps/api/drizzle/meta/
++docs/api/openapi.json
+diff --git a/apps/api/package.json b/apps/api/package.json
+index 79cb435..2ec2bf9 100644
+--- a/apps/api/package.json
++++ b/apps/api/package.json
+@@ -10,9 +10,11 @@
+     "typecheck": "tsc --noEmit",
+     "test": "vitest run",
+     "db:generate": "drizzle-kit generate",
+-    "db:migrate": "drizzle-kit migrate"
++    "db:migrate": "drizzle-kit migrate",
++    "api:docs": "tsx scripts/write-openapi.ts"
+   },
+   "dependencies": {
++    "@fastify/swagger": "~9.9.0",
+     "@fastify/type-provider-zod": "^1.0.0",
+     "@todos/shared": "workspace:*",
+     "drizzle-orm": "^0.45.3",
+diff --git a/apps/api/src/app.ts b/apps/api/src/app.ts
+index b290ff5..16680d4 100644
+--- a/apps/api/src/app.ts
++++ b/apps/api/src/app.ts
+@@ -13,6 +13,7 @@ import {
+   registerErrorHandlers,
+ } from "./errors"
+ import { createLogController, registerRequestLogging } from "./logger"
++import { registerOpenApi } from "./openapi"
+ import { createRepositories } from "./repositories"
+ import { healthRoutes } from "./routes/health"
+ import { todoRoutes } from "./routes/todos"
+@@ -48,6 +49,8 @@ export function buildApp({ pool, logger }: BuildAppOptions): FastifyInstance {
+   registerErrorHandlers(app)
+   registerRequestContext(app)
+   registerRequestLogging(app)
++  // Before the routes: swagger collects them through `onRoute`.
++  registerOpenApi(app)
+ 
+   const repositories = createRepositories(pool)
+   const healthService = createHealthService({
+diff --git a/apps/api/src/routes/health.ts b/apps/api/src/routes/health.ts
+index 030d1f0..ce6837d 100644
+--- a/apps/api/src/routes/health.ts
++++ b/apps/api/src/routes/health.ts
+@@ -1,6 +1,7 @@
+ import { HEALTH_PATH, HealthResponseSchema } from "@todos/shared"
+ import type { FastifyPluginAsyncZod } from "@fastify/type-provider-zod"
+ 
++import { errorResponses } from "../openapi"
+ import type { HealthService } from "../services/health-service"
+ 
+ export function healthRoutes(deps: {
+@@ -9,7 +10,16 @@ export function healthRoutes(deps: {
+   return async (app) => {
+     app.get(
+       HEALTH_PATH,
+-      { schema: { response: { 200: HealthResponseSchema } } },
++      {
++        schema: {
++          response: {
++            200: HealthResponseSchema.describe(
++              "The API is up and the database is reachable"
++            ),
++            ...errorResponses(500, 503),
++          },
++        },
++      },
+       async (request) => {
+         await deps.healthService.check(request.ctx)
+         return { status: "ok" as const }
+diff --git a/apps/api/src/routes/todos.ts b/apps/api/src/routes/todos.ts
+index 64f00eb..8225e5f 100644
+--- a/apps/api/src/routes/todos.ts
++++ b/apps/api/src/routes/todos.ts
+@@ -8,7 +8,9 @@ import {
+   UpdateTodoRequestSchema,
+ } from "@todos/shared"
+ import type { FastifyPluginAsyncZod } from "@fastify/type-provider-zod"
++import { z } from "zod"
+ 
++import { errorResponses } from "../openapi"
+ import type { TodoService } from "../services/todo-service"
+ 
+ export function todoRoutes(deps: {
+@@ -17,7 +19,14 @@ export function todoRoutes(deps: {
+   return async (app) => {
+     app.get(
+       TODOS_PATH,
+-      { schema: { response: { 200: TodoListResponseSchema } } },
++      {
++        schema: {
++          response: {
++            200: TodoListResponseSchema.describe("Every Todo, newest first"),
++            ...errorResponses(500, 503),
++          },
++        },
++      },
+       async (request) => {
+         const todos = await deps.todoService.list(request.ctx)
+         return { todos }
+@@ -29,7 +38,13 @@ export function todoRoutes(deps: {
+       {
+         schema: {
+           body: CreateTodoRequestSchema,
+-          response: { 200: TodoSchema, 201: TodoSchema },
++          response: {
++            200: TodoSchema.describe(
++              "Already stored with the same Description (idempotent repeat)"
++            ),
++            201: TodoSchema.describe("Created"),
++            ...errorResponses(400, 409, 413, 415, 500, 503),
++          },
+         },
+       },
+       async (request, reply) => {
+@@ -47,7 +62,10 @@ export function todoRoutes(deps: {
+         schema: {
+           params: TodoIdParamsSchema,
+           body: UpdateTodoRequestSchema,
+-          response: { 200: TodoSchema },
++          response: {
++            200: TodoSchema.describe("The updated (or unchanged) Todo"),
++            ...errorResponses(400, 404, 413, 415, 500, 503),
++          },
+         },
+       },
+       async (request) =>
+@@ -56,10 +74,20 @@ export function todoRoutes(deps: {
+ 
+     app.delete(
+       TODO_PATH,
+-      { schema: { params: TodoIdParamsSchema } },
++      {
++        schema: {
++          params: TodoIdParamsSchema,
++          response: {
++            // Documents the empty 204; the handler sends no body at all.
++            204: z.null().describe("No content"),
++            ...errorResponses(400, 404, 500, 503),
++          },
++        },
++      },
+       async (request, reply) => {
+         await deps.todoService.delete(request.ctx, request.params.id)
+-        return reply.code(204).send()
++        // `null` matches the documented 204 schema; Fastify sends no body.
++        return reply.code(204).send(null)
+       }
+     )
+   }
+diff --git a/apps/api/tsconfig.json b/apps/api/tsconfig.json
+index 2e182fa..68754b4 100644
+--- a/apps/api/tsconfig.json
++++ b/apps/api/tsconfig.json
+@@ -5,5 +5,5 @@
+     "lib": ["ES2023"],
+     "types": ["node"]
+   },
+-  "include": ["src", "test", "drizzle.config.ts", "vitest.config.ts"]
++  "include": ["src", "test", "scripts", "drizzle.config.ts", "vitest.config.ts"]
+ }
+diff --git a/package.json b/package.json
+index e0c8421..022df7c 100644
+--- a/package.json
++++ b/package.json
+@@ -17,7 +17,7 @@
+     "typecheck": "pnpm -r typecheck",
+     "db:generate": "pnpm --filter @todos/api db:generate",
+     "db:migrate": "pnpm --filter @todos/api db:migrate",
+-    "api:docs": "node -e \"console.log('api:docs: not yet implemented')\""
++    "api:docs": "pnpm --filter @todos/api api:docs"
+   },
+   "devDependencies": {
+     "@eslint/js": "^10.0.1",
+diff --git a/packages/shared/src/paths.ts b/packages/shared/src/paths.ts
+index bb4b6f3..2d67a17 100644
+--- a/packages/shared/src/paths.ts
++++ b/packages/shared/src/paths.ts
+@@ -12,3 +12,6 @@ export const TODO_PATH = `${TODOS_PATH}/:id`
+ export function todoPath(id: string): string {
+   return `${TODOS_PATH}/${encodeURIComponent(id)}`
+ }
++
++/** The generated OpenAPI document (served live; snapshot in docs/api). */
++export const OPENAPI_PATH = `${API_PREFIX}/openapi.json`
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 76455b4..9331cb9 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -196,6 +196,9 @@ importers:
+ 
+   apps/api:
+     dependencies:
++      '@fastify/swagger':
++        specifier: ~9.9.0
++        version: 9.9.0
+       '@fastify/type-provider-zod':
+         specifier: ^1.0.0
+         version: 1.0.0(@fastify/swagger@9.9.0)(fastify@5.12.5)(openapi-types@12.1.3)(zod@4.6.5)
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..8ee96fc
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,173 @@
++# Todos
++
++A single shared Todo list: a React SPA, a Fastify API and PostgreSQL, run with Docker Compose. Changes show instantly (optimistic updates) and roll back with a toast if the server refuses them.
++
++- [Prerequisites](#prerequisites)
++- [Run the dev stack](#run-the-dev-stack)
++- [Tests and lint](#tests-and-lint)
++- [Run the production-like stack](#run-the-production-like-stack)
++- [Settings (`.env`)](#settings-env)
++- [Where the data lives](#where-the-data-lives)
++- [Upgrading without losing data](#upgrading-without-losing-data)
++- [One mode at a time](#one-mode-at-a-time)
++- [API documentation](#api-documentation)
++- [How the repository fits together](#how-the-repository-fits-together)
++
++> [!WARNING]
++> **`docker compose down -v` permanently deletes all Todos.** The `-v` flag removes the `todos-data` volume, which holds the database. There is no backup. To stop the app, use `docker compose down` (no `-v`) or `docker compose stop`.
++
++## Prerequisites
++
++- **Docker** with the **Compose v2 plugin or later** (the `docker compose` command, not the old `docker-compose`; check with `docker compose version`). This is all you need to run the app.
++- **Node 24** and **pnpm 12.6**, only for running tests, lint and scripts on the host. pnpm comes through corepack, which ships with Node:
++
++  ```sh
++  corepack enable        # pnpm now resolves to the version pinned in package.json (12.6.0)
++  pnpm install
++  ```
++
++## Run the dev stack
++
++```sh
++cp .env.example .env
++docker compose up
++```
++
++The first run builds the images and takes a few minutes. When the API logs `Server listening`, open **http://localhost:8080** (the port is `WEB_PORT` in `.env`).
++
++`docker compose up` loads `compose.yaml` plus `compose.override.yaml`, which gives you:
++
++| What                                  | Where                                                                      |
++| ------------------------------------- | -------------------------------------------------------------------------- |
++| Web app (Vite dev server, hot reload) | `http://localhost:${WEB_PORT}` (default 8080)                              |
++| API (`tsx watch`, restarts on save)   | not published; reached through the web app at `/api/v1/...`                |
++| Node inspector for the API            | `127.0.0.1:9229` (attach your debugger here; fixed, not an `.env` setting) |
++| PostgreSQL                            | `127.0.0.1:${DB_PORT}` (default 5432), user/password/db from `.env`        |
++
++The source is bind-mounted, so edits in `apps/` and `packages/` apply without a rebuild. The API applies database migrations itself on startup.
++
++**After a dependency change** (a `package.json` or `pnpm-lock.yaml` change, including after `git pull`), rebuild and renew the containers' `node_modules` volumes:
++
++```sh
++docker compose up --build -V
++```
++
++Without `-V`, the containers keep the old `node_modules`. `-V` only renews anonymous volumes; it never touches `todos-data`.
++
++Stop with `Ctrl+C`, or `docker compose down` (never `-v`, see the warning above).
++
++## Tests and lint
++
++Run these on the host after `pnpm install`:
++
++| Command           | What it does                                                                                                                                                                                                | Needs                                                                                                                                                                                  |
++| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
++| `pnpm test`       | Unit and API tests for every package (Vitest)                                                                                                                                                               | The dev stack's `db` running: the API tests use the `todos_test` database on `DB_PORT`, found through `DATABASE_URL` in `.env` (or `TEST_DATABASE_URL`, see [Settings](#settings-env)) |
++| `pnpm lint`       | ESLint over the repo                                                                                                                                                                                        | —                                                                                                                                                                                      |
++| `pnpm typecheck`  | `tsc` in every package                                                                                                                                                                                      | —                                                                                                                                                                                      |
++| `pnpm format`     | Prettier, rewriting files                                                                                                                                                                                   | —                                                                                                                                                                                      |
++| `pnpm test:stack` | Smoke test of the production-like stack: builds and runs `compose.yaml` in a separate Compose project (`todos-smoke`) and checks it through nginx on your LAN address. Leaves your own stack and data alone | Docker; takes a few minutes                                                                                                                                                            |
++| `pnpm test:e2e`   | **Not implemented yet.** It only prints a message; the Playwright suite comes in Story 3.3                                                                                                                  | —                                                                                                                                                                                      |
++| `pnpm api:docs`   | Rewrites the OpenAPI snapshot `docs/api/openapi.json`                                                                                                                                                       | —                                                                                                                                                                                      |
++
++You don't need the whole dev stack for `pnpm test`, only the database: `docker compose up -d db`. (Don't do this while the production-like stack is running: it swaps only `db` into dev mode. Stop that stack first; see [One mode at a time](#one-mode-at-a-time).)
++
++The schema commands `pnpm db:generate` (write a new Drizzle migration into `apps/api/drizzle/` after editing `apps/api/src/db/schema.ts`) and `pnpm db:migrate` (apply migrations to the dev db) also run on the host, using `DATABASE_URL` from `.env`. You rarely need `db:migrate`, since the API applies migrations on startup.
++
++## Run the production-like stack
++
++This is how the app is meant to run on one host (for example a home server) and be used from phones and laptops on the same network. It serves the built SPA with nginx, runs the production API, and keeps PostgreSQL private; only the web port is published.
++
++```sh
++cp .env.example .env     # if you haven't already; change POSTGRES_PASSWORD
++docker compose -f compose.yaml up -d --build
++docker compose -f compose.yaml ps      # wait until api shows (healthy)
++```
++
++`-f compose.yaml` is what makes this the production-like stack: it skips `compose.override.yaml`. Open `http://localhost:${WEB_PORT}` on the host (default `http://localhost:8080`). Containers restart on their own after a crash or a host reboot (`restart: unless-stopped`).
++
++Useful commands:
++
++```sh
++docker compose -f compose.yaml logs -f api     # API logs (JSON, one line per request)
++docker compose -f compose.yaml down            # stop; data is kept (never add -v)
++```
++
++### Reach it from a phone or another device
++
++1. **Find the host's LAN IP address.**
++   - Linux: `hostname -I` (usually the first address, often `192.168.x.x` or `10.x.x.x`; on hosts with Docker, VPN or other virtual interfaces, pick the one on your Wi-Fi or Ethernet network, e.g. from `ip -4 addr`)
++   - macOS: `ipconfig getifaddr en0` (Wi-Fi; try `en1` if empty)
++   - Windows: `ipconfig`, the "IPv4 Address" of your Wi-Fi or Ethernet adapter
++2. **Open `http://<host-LAN-IP>:<WEB_PORT>`** on the phone, for example `http://192.168.1.20:8080`. The phone must be on the same network.
++3. **If it doesn't load, check the host firewall.** It must allow inbound TCP on `WEB_PORT`. For example, on Ubuntu with ufw: `sudo ufw allow 8080/tcp`. On macOS and Windows, allow Docker through the system firewall for private networks.
++4. **It is plain HTTP**, with no TLS and no login. Type `http://` explicitly if the browser tries `https://`. Anyone who can reach the URL can read and change the list, so only run it on a network you trust.
++
++## Settings (`.env`)
++
++Copy `.env.example` to `.env` and edit it. `.env` is git-ignored; never commit it. Docker Compose reads it for both stacks, and host-side commands (`pnpm test`, `pnpm db:*`) read it too.
++
++| Key                 | Default                                       | Used by                                                                      | What it does                                                                                                                                                                                                                                                                    |
++| ------------------- | --------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
++| `POSTGRES_USER`     | `todos`                                       | `db` and `api` containers                                                    | Database user. The API container builds its own connection URL from this and the next two values, pointing at the `db` service.                                                                                                                                                 |
++| `POSTGRES_PASSWORD` | `todos`                                       | `db` and `api` containers                                                    | Database password. Change it for a real deployment. Must be URL-safe (no `@ : / ? # %`), since it is put into the URL unencoded.                                                                                                                                                |
++| `POSTGRES_DB`       | `todos`                                       | `db` and `api` containers                                                    | Database name.                                                                                                                                                                                                                                                                  |
++| `DATABASE_URL`      | `postgres://todos:todos@localhost:5432/todos` | Host-side commands only (`pnpm test`, `pnpm db:generate`, `pnpm db:migrate`) | Connection URL for the dev db from your machine. Its port must match `DB_PORT`, and its credentials the three values above. `pnpm test` uses the same URL with the database swapped for `todos_test`. The containers ignore it.                                                 |
++| `PORT`              | `3000`                                        | API run outside Docker                                                       | Port the API listens on. Compose doesn't read this key: the containers always listen on 3000. It applies only if you run the API on the host with the variables exported, e.g. `set -a; . ./.env; set +a; pnpm --filter @todos/api start` (the API itself doesn't read `.env`). |
++| `LOG_LEVEL`         | `info`                                        | API (both stacks)                                                            | One of `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`.                                                                                                                                                                                                            |
++| `WEB_PORT`          | `8080`                                        | Both stacks                                                                  | Host port for the web app (dev: Vite; prod: nginx). The only port the production-like stack publishes.                                                                                                                                                                          |
++| `DB_PORT`           | `5432`                                        | Dev stack only                                                               | Host port for PostgreSQL, bound to `127.0.0.1` only. Change it (and the port in `DATABASE_URL`) if 5432 is taken.                                                                                                                                                               |
++
++One more variable is not in `.env.example`: `TEST_DATABASE_URL`, an optional full URL for the database `pnpm test` uses. It overrides the `DATABASE_URL`-derived `todos_test` URL.
++
++The API validates `DATABASE_URL`, `PORT` and `LOG_LEVEL` at startup and exits with a clear log line if one is invalid.
++
++## Where the data lives
++
++All Todos are in PostgreSQL, whose data directory is the Docker named volume **`todos-data`** (Compose names it `todos_todos-data`, after the `todos` project):
++
++```sh
++docker volume ls | grep todos-data
++```
++
++It survives `docker compose down`, `up`, rebuilds, and host reboots. Only `docker compose down -v` or `docker volume rm` delete it.
++
++## Upgrading without losing data
++
++```sh
++git pull
++docker compose -f compose.yaml up -d --build
++```
++
++- **`--build` is required.** Without it, Compose keeps running the old images, and you are still on the old version.
++- **Migrations apply automatically.** The API applies any new committed database migrations before it starts listening. There is no manual step.
++- **Never add `-v`** to `down` or `up`. Your data stays in `todos-data` across upgrades.
++
++For the dev stack after a pull, use `docker compose up --build -V` (see [Run the dev stack](#run-the-dev-stack)).
++
++## One mode at a time
++
++Dev (`docker compose up`) and production-like (`docker compose -f compose.yaml up -d`) are the **same Compose project, `todos`**. They share the containers' names, `WEB_PORT` and the `todos-data` volume, so the same Todos appear in both. Run one mode at a time:
++
++- Starting one mode replaces the other mode's containers. That is expected; your data is kept.
++- The `todos_test` database (used by `pnpm test`) is created only when the **dev** stack initialises a new `todos-data` volume. If the production-like stack created the volume first, `pnpm test` fails because `todos_test` doesn't exist. Create it once with the dev stack's `db` running:
++
++  ```sh
++  docker compose exec db sh -c 'createdb -U "$POSTGRES_USER" todos_test'
++  ```
++
++- The dev stack always publishes the inspector on `127.0.0.1:9229`, so it can't start while anything else holds that port (for example another checkout's dev stack).
++- **A second copy on the same host** (another checkout, a test run) needs its own project: add `COMPOSE_PROJECT_NAME=<name>` to that copy's `.env` and give it free `WEB_PORT`/`DB_PORT`. Its containers and volume are then separate. The image tags (`todos-api:prod`, `todos-web:dev`, …) are fixed in the compose files and shared by every copy on the host, so always use `--build` after switching copies (`pnpm test:stack` rebuilds the `:prod` tags too).
++
++## API documentation
++
++The API is described by an OpenAPI 3 document, generated from the shared Zod schemas (never written by hand):
++
++- **Committed snapshot:** [`docs/api/openapi.json`](docs/api/openapi.json). Regenerate it with `pnpm api:docs` after changing a route or a schema in `packages/shared`; a test in `pnpm test` fails when it is out of date.
++- **Live document:** `GET /api/v1/openapi.json` on any running stack, for example `http://localhost:8080/api/v1/openapi.json`. It is the same document as the snapshot, served as compact JSON rather than pretty-printed.
++
++It covers `GET /api/v1/health`, `GET` and `POST /api/v1/todos`, and `PATCH` and `DELETE /api/v1/todos/{id}`, with every request and response schema. Every error response is the envelope `{ "error": { "code", "message", "details"? } }`, where `code` is one of `VALIDATION_ERROR` (400, 413, 415), `NOT_FOUND` (404), `CONFLICT` (409), `INTERNAL` (500) or `UNAVAILABLE` (503). Paste the file into any OpenAPI viewer (for example editor.swagger.io) to browse it.
++
++## How the repository fits together
++
++This is a pnpm workspace with three packages, and imports only go **web → shared ← api**: `packages/shared` holds the Zod schemas, the `/api/v1` paths, the error codes and the limits that both sides use, so the browser and the server agree on one contract, and `apps/web` and `apps/api` never import each other. `apps/api` is Fastify: `src/routes/` validate requests with the shared schemas and call `src/services/` (the rules, such as Description normalization and idempotent create), which call `src/repositories/` (Drizzle over PostgreSQL, schema in `src/db/`, migrations in `drizzle/`); `src/errors.ts` is the one place that turns failures into the error envelope. `apps/web` is React with TanStack Query, and it only ever calls relative `/api/v1/...` URLs: in dev the Vite server proxies them, in production nginx does, so the SPA and the API share one origin and there is no CORS. In the browser, `src/api/http.ts` is the only code that calls `fetch`, and `src/api/todo-sync.ts` is the sync protocol behind every add, edit, toggle and delete. For each Todo id it keeps the **confirmed** state (what the server last returned), a queue of **pending** optimistic operations (rendered immediately on top of the confirmed state) and a **generation** counter. Writes to the same Todo run in order; when one fails, the generation is bumped, queued writes for that Todo are dropped without being sent, the Todo rolls back to its confirmed state, and exactly one toast appears, with Retry resending the same id and payload. Tests live next to the web code (`*.test.ts[x]`) and in `apps/api/test/` and `packages/shared/test/`, with `e2e/` reserved for Playwright and `scripts/` holding the stack smoke test.
+diff --git a/apps/api/scripts/write-openapi.ts b/apps/api/scripts/write-openapi.ts
+new file mode 100644
+index 0000000..c4dd4ce
+--- /dev/null
++++ b/apps/api/scripts/write-openapi.ts
+@@ -0,0 +1,17 @@
++// `pnpm api:docs`: writes the committed OpenAPI snapshot, docs/api/openapi.json.
++// Builds the app with a pool that never connects, so no database is needed.
++import { mkdir, writeFile } from "node:fs/promises"
++import { dirname, relative, resolve } from "node:path"
++
++import {
++  generateOpenApiDocument,
++  serializeOpenApiDocument,
++} from "../src/openapi"
++
++const REPO_ROOT = resolve(import.meta.dirname, "../../..")
++const SNAPSHOT_PATH = resolve(REPO_ROOT, "docs/api/openapi.json")
++
++const doc = await generateOpenApiDocument()
++await mkdir(dirname(SNAPSHOT_PATH), { recursive: true })
++await writeFile(SNAPSHOT_PATH, serializeOpenApiDocument(doc))
++console.log(`wrote ${relative(REPO_ROOT, SNAPSHOT_PATH)}`)
+diff --git a/apps/api/src/openapi.ts b/apps/api/src/openapi.ts
+new file mode 100644
+index 0000000..724cbc2
+--- /dev/null
++++ b/apps/api/src/openapi.ts
+@@ -0,0 +1,96 @@
++import fastifySwagger from "@fastify/swagger"
++import { jsonSchemaTransform } from "@fastify/type-provider-zod"
++import { ErrorEnvelopeSchema, OPENAPI_PATH } from "@todos/shared"
++import type { FastifyInstance } from "fastify"
++
++import { buildApp } from "./app"
++import { createPool } from "./db/client"
++import { createLogger } from "./logger"
++
++const DESCRIPTION = [
++  "The Todos API. Every route lives under `/api/v1`.",
++  "Request bodies are strict: unknown keys are rejected.",
++  "Every non-2xx response is the error envelope",
++  "`{ error: { code, message, details? } }`; clients branch on `code`, never",
++  "on `message`.",
++].join(" ")
++
++/** The parts of the generated document that the drift test inspects. */
++export interface OpenApiDocument {
++  openapi: string
++  paths: Record<string, Record<string, OpenApiOperation>>
++  [key: string]: unknown
++}
++
++export interface OpenApiOperation {
++  requestBody?: { content: Record<string, { schema: Record<string, unknown> }> }
++  responses: Record<string, { description: string; content?: unknown }>
++  [key: string]: unknown
++}
++
++/** The error statuses a route can document, with their AD-5 code and cause. */
++const ERROR_DESCRIPTIONS = {
++  400: "VALIDATION_ERROR — malformed or empty JSON, an invalid id, or a body that fails its schema or the Description rules (1–500 characters after normalization); `details`, when present, names each field",
++  404: "NOT_FOUND — no Todo has this id",
++  409: "CONFLICT — a Todo with this id already exists with a different Description",
++  413: "VALIDATION_ERROR — the request body is larger than 16 KiB",
++  415: "VALIDATION_ERROR — the request body is not application/json",
++  500: "INTERNAL — an unexpected server error",
++  503: "UNAVAILABLE — the database is unreachable",
++} as const
++
++export type ErrorStatus = keyof typeof ERROR_DESCRIPTIONS
++
++/**
++ * Response-schema entries for the given error statuses, all using the shared
++ * error envelope. Spread into a route's `response` map; the same schema also
++ * serializes the error replies, which every envelope already satisfies.
++ */
++export function errorResponses<const S extends ErrorStatus>(
++  ...statuses: S[]
++): Record<S, typeof ErrorEnvelopeSchema> {
++  return Object.fromEntries(
++    statuses.map((status) => [
++      status,
++      ErrorEnvelopeSchema.describe(ERROR_DESCRIPTIONS[status]),
++    ])
++  ) as Record<S, typeof ErrorEnvelopeSchema>
++}
++
++/**
++ * Registers `@fastify/swagger` and the hidden `GET /api/v1/openapi.json`
++ * route. Must run before the routes are registered, since swagger collects
++ * them through `onRoute`.
++ */
++export function registerOpenApi(app: FastifyInstance): void {
++  app.register(fastifySwagger, {
++    openapi: {
++      info: { title: "Todos API", version: "1.0.0", description: DESCRIPTION },
++    },
++    transform: jsonSchemaTransform,
++  })
++
++  app.get(OPENAPI_PATH, { schema: { hide: true } }, async () => app.swagger())
++}
++
++/**
++ * Builds the app without touching the database (the pool never connects) and
++ * returns its OpenAPI document. Used by `pnpm api:docs` and the drift test.
++ */
++export async function generateOpenApiDocument(): Promise<OpenApiDocument> {
++  const logger = createLogger("silent")
++  const pool = createPool("postgres://openapi@127.0.0.1:1/openapi", logger)
++  const app = buildApp({ pool, logger })
++  try {
++    await app.ready()
++    return app.swagger() as unknown as OpenApiDocument
++  } finally {
++    await app.close()
++    await pool.end()
++  }
++}
++
++/** The snapshot file format: deterministic, 2-space JSON plus a newline. */
++export function serializeOpenApiDocument(doc: unknown): string {
++  return `${JSON.stringify(doc, null, 2)}\n`
++}
+diff --git a/apps/api/test/openapi.test.ts b/apps/api/test/openapi.test.ts
+new file mode 100644
+index 0000000..dfcdc18
+--- /dev/null
++++ b/apps/api/test/openapi.test.ts
+@@ -0,0 +1,185 @@
++import { readFileSync } from "node:fs"
++import { resolve } from "node:path"
++
++import {
++  ErrorCodeSchema,
++  HEALTH_PATH,
++  OPENAPI_PATH,
++  todoPath,
++  TODOS_PATH,
++} from "@todos/shared"
++import { isDeepStrictEqual } from "node:util"
++import { afterAll, beforeAll, describe, expect, it } from "vitest"
++
++import {
++  generateOpenApiDocument,
++  serializeOpenApiDocument,
++  type OpenApiDocument,
++} from "../src/openapi"
++import { createTestApp, type TestApp } from "./helpers"
++
++const SNAPSHOT_PATH = resolve(
++  import.meta.dirname,
++  "../../../docs/api/openapi.json"
++)
++
++const TODO_ITEM_PATH = `${TODOS_PATH}/{id}`
++
++/** Every documented operation and exactly the statuses it may return (AD-5). */
++const EXPECTED_STATUSES: Record<string, Record<string, string[]>> = {
++  [HEALTH_PATH]: { get: ["200", "500", "503"] },
++  [TODOS_PATH]: {
++    get: ["200", "500", "503"],
++    post: ["200", "201", "400", "409", "413", "415", "500", "503"],
++  },
++  [TODO_ITEM_PATH]: {
++    patch: ["200", "400", "404", "413", "415", "500", "503"],
++    delete: ["204", "400", "404", "500", "503"],
++  },
++}
++
++const ERROR_CODE_FOR_STATUS: Record<string, string> = {
++  "400": "VALIDATION_ERROR",
++  "404": "NOT_FOUND",
++  "409": "CONFLICT",
++  "413": "VALIDATION_ERROR",
++  "415": "VALIDATION_ERROR",
++  "500": "INTERNAL",
++  "503": "UNAVAILABLE",
++}
++
++/**
++ * Compares the committed snapshot text with a freshly generated document.
++ * Returns a failure message, or `undefined` when they match.
++ */
++function snapshotMismatch(
++  committed: string,
++  generated: OpenApiDocument
++): string | undefined {
++  const expected = serializeOpenApiDocument(generated)
++  if (committed === expected) return undefined
++  let parsed: unknown
++  try {
++    parsed = JSON.parse(committed)
++  } catch {
++    return "docs/api/openapi.json is not valid JSON. Run `pnpm api:docs` and commit the result."
++  }
++  const kind = isDeepStrictEqual(parsed, generated)
++    ? "is formatted differently from"
++    : "differs from"
++  return `docs/api/openapi.json ${kind} what the current schemas generate. Run \`pnpm api:docs\` and commit the result.`
++}
++
++type Json = Record<string, unknown>
++
++function errorCodeEnum(response: { content?: unknown }): unknown {
++  const content = response.content as Json | undefined
++  const schema = (content?.["application/json"] as Json | undefined)?.schema as
++    Json | undefined
++  const error = (schema?.properties as Json | undefined)?.error as
++    Json | undefined
++  const code = (error?.properties as Json | undefined)?.code as Json | undefined
++  return code?.enum
++}
++
++describe("OpenAPI document", () => {
++  let t: TestApp
++  let doc: OpenApiDocument
++
++  beforeAll(async () => {
++    t = createTestApp()
++    doc = await generateOpenApiDocument()
++  })
++  afterAll(() => t.close())
++
++  it(`serves the generated document at GET ${OPENAPI_PATH}`, async () => {
++    const res = await t.app.inject({ method: "GET", url: OPENAPI_PATH })
++    expect(res.statusCode).toBe(200)
++    expect(res.headers["content-type"]).toMatch(/^application\/json/)
++    const live = res.json() as OpenApiDocument
++    expect(live.openapi).toMatch(/^3\./)
++    expect(live).toEqual(doc)
++  })
++
++  it("documents exactly the API's paths and methods, and hides its own route", () => {
++    const actual = Object.fromEntries(
++      Object.entries(doc.paths).map(([path, ops]) => [
++        path,
++        Object.keys(ops).sort(),
++      ])
++    )
++    expect(actual).toEqual({
++      [HEALTH_PATH]: ["get"],
++      [TODOS_PATH]: ["get", "post"],
++      [TODO_ITEM_PATH]: ["delete", "patch"],
++    })
++    expect(doc.paths[OPENAPI_PATH]).toBeUndefined()
++  })
++
++  it.each([
++    ["post", TODOS_PATH, ["id", "description"]],
++    ["patch", TODO_ITEM_PATH, ["description", "completed"]],
++  ])("%s %s has a strict JSON request body", (method, path, keys) => {
++    const body = doc.paths[path]?.[method]?.requestBody
++    const schema = body?.content["application/json"]?.schema
++    expect(schema).toMatchObject({
++      type: "object",
++      additionalProperties: false,
++    })
++    expect(Object.keys(schema?.properties as Json).sort()).toEqual(
++      [...keys].sort()
++    )
++  })
++
++  it("lists exactly each operation's statuses, with the error envelope for every error", () => {
++    for (const [path, ops] of Object.entries(EXPECTED_STATUSES)) {
++      for (const [method, statuses] of Object.entries(ops)) {
++        const responses = doc.paths[path]?.[method]?.responses ?? {}
++        expect(Object.keys(responses).sort(), `${method} ${path}`).toEqual(
++          [...statuses].sort()
++        )
++        for (const status of statuses.filter((s) => Number(s) >= 400)) {
++          const response = responses[status]!
++          expect(
++            errorCodeEnum(response),
++            `${method} ${path} ${status}`
++          ).toEqual(ErrorCodeSchema.options)
++          expect(response.description).toMatch(
++            new RegExp(`^${ERROR_CODE_FOR_STATUS[status]} — .+`)
++          )
++        }
++      }
++    }
++  })
++
++  it("matches the committed snapshot docs/api/openapi.json", () => {
++    const committed = readFileSync(SNAPSHOT_PATH, "utf8")
++    const mismatch = snapshotMismatch(committed, doc)
++    expect(mismatch, mismatch).toBeUndefined()
++  })
++
++  it("reports drift when the schemas change without `pnpm api:docs`", () => {
++    const committed = serializeOpenApiDocument(doc)
++    expect(snapshotMismatch(committed, doc)).toBeUndefined()
++
++    const drifted = structuredClone(doc)
++    drifted.paths[TODOS_PATH]!.post!.responses["201"]!.description = "changed"
++    expect(snapshotMismatch(committed, drifted)).toMatch(/pnpm api:docs/)
++    expect(snapshotMismatch(committed.trimEnd(), doc)).toMatch(/pnpm api:docs/)
++  })
++
++  it("DELETE still sends 204 with no body and no content-type", async () => {
++    const id = "0199a1b2-c3d4-7e5f-8a9b-00000000beef"
++    const created = await t.app.inject({
++      method: "POST",
++      url: TODOS_PATH,
++      payload: { id, description: "openapi 204 check" },
++    })
++    expect([200, 201]).toContain(created.statusCode)
++    const removed = await t.app.inject({ method: "DELETE", url: todoPath(id) })
++    expect(removed.statusCode).toBe(204)
++    expect(removed.body).toBe("")
++    expect(removed.headers["content-type"]).toBeUndefined()
++    expect(removed.headers["content-length"]).toBeUndefined()
++  })
++})
+diff --git a/docs/api/openapi.json b/docs/api/openapi.json
+new file mode 100644
+index 0000000..d9c9c6d
+--- /dev/null
++++ b/docs/api/openapi.json
+@@ -0,0 +1,1625 @@
++{
++  "openapi": "3.0.3",
++  "info": {
++    "title": "Todos API",
++    "version": "1.0.0",
++    "description": "The Todos API. Every route lives under `/api/v1`. Request bodies are strict: unknown keys are rejected. Every non-2xx response is the error envelope `{ error: { code, message, details? } }`; clients branch on `code`, never on `message`."
++  },
++  "components": {
++    "schemas": {}
++  },
++  "paths": {
++    "/api/v1/health": {
++      "get": {
++        "responses": {
++          "200": {
++            "description": "The API is up and the database is reachable",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "status": {
++                      "type": "string",
++                      "enum": [
++                        "ok"
++                      ]
++                    }
++                  },
++                  "required": [
++                    "status"
++                  ],
++                  "additionalProperties": false,
++                  "description": "The API is up and the database is reachable"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL — an unexpected server error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "INTERNAL — an unexpected server error"
++                }
++              }
++            }
++          },
++          "503": {
++            "description": "UNAVAILABLE — the database is unreachable",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "UNAVAILABLE — the database is unreachable"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/api/v1/todos": {
++      "get": {
++        "responses": {
++          "200": {
++            "description": "Every Todo, newest first",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "todos": {
++                      "type": "array",
++                      "items": {
++                        "type": "object",
++                        "properties": {
++                          "id": {
++                            "type": "string",
++                            "format": "uuid",
++                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
++                          },
++                          "description": {
++                            "type": "string"
++                          },
++                          "completed": {
++                            "type": "boolean"
++                          },
++                          "createdAt": {
++                            "type": "string",
++                            "format": "date-time",
++                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
++                          },
++                          "updatedAt": {
++                            "type": "string",
++                            "format": "date-time",
++                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
++                          }
++                        },
++                        "required": [
++                          "id",
++                          "description",
++                          "completed",
++                          "createdAt",
++                          "updatedAt"
++                        ],
++                        "additionalProperties": false
++                      }
++                    }
++                  },
++                  "required": [
++                    "todos"
++                  ],
++                  "additionalProperties": false,
++                  "description": "Every Todo, newest first"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL — an unexpected server error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "INTERNAL — an unexpected server error"
++                }
++              }
++            }
++          },
++          "503": {
++            "description": "UNAVAILABLE — the database is unreachable",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "UNAVAILABLE — the database is unreachable"
++                }
++              }
++            }
++          }
++        }
++      },
++      "post": {
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "type": "object",
++                "properties": {
++                  "id": {
++                    "type": "string",
++                    "format": "uuid",
++                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
++                  },
++                  "description": {
++                    "type": "string"
++                  }
++                },
++                "required": [
++                  "id",
++                  "description"
++                ],
++                "additionalProperties": false
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Already stored with the same Description (idempotent repeat)",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "id": {
++                      "type": "string",
++                      "format": "uuid",
++                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
++                    },
++                    "description": {
++                      "type": "string"
++                    },
++                    "completed": {
++                      "type": "boolean"
++                    },
++                    "createdAt": {
++                      "type": "string",
++                      "format": "date-time",
++                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
++                    },
++                    "updatedAt": {
++                      "type": "string",
++                      "format": "date-time",
++                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
++                    }
++                  },
++                  "required": [
++                    "id",
++                    "description",
++                    "completed",
++                    "createdAt",
++                    "updatedAt"
++                  ],
++                  "additionalProperties": false,
++                  "description": "Already stored with the same Description (idempotent repeat)"
++                }
++              }
++            }
++          },
++          "201": {
++            "description": "Created",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "id": {
++                      "type": "string",
++                      "format": "uuid",
++                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
++                    },
++                    "description": {
++                      "type": "string"
++                    },
++                    "completed": {
++                      "type": "boolean"
++                    },
++                    "createdAt": {
++                      "type": "string",
++                      "format": "date-time",
++                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
++                    },
++                    "updatedAt": {
++                      "type": "string",
++                      "format": "date-time",
++                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
++                    }
++                  },
++                  "required": [
++                    "id",
++                    "description",
++                    "completed",
++                    "createdAt",
++                    "updatedAt"
++                  ],
++                  "additionalProperties": false,
++                  "description": "Created"
++                }
++              }
++            }
++          },
++          "400": {
++            "description": "VALIDATION_ERROR — malformed or empty JSON, an invalid id, or a body that fails its schema or the Description rules (1–500 characters after normalization); `details`, when present, names each field",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "VALIDATION_ERROR — malformed or empty JSON, an invalid id, or a body that fails its schema or the Description rules (1–500 characters after normalization); `details`, when present, names each field"
++                }
++              }
++            }
++          },
++          "409": {
++            "description": "CONFLICT — a Todo with this id already exists with a different Description",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "CONFLICT — a Todo with this id already exists with a different Description"
++                }
++              }
++            }
++          },
++          "413": {
++            "description": "VALIDATION_ERROR — the request body is larger than 16 KiB",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "VALIDATION_ERROR — the request body is larger than 16 KiB"
++                }
++              }
++            }
++          },
++          "415": {
++            "description": "VALIDATION_ERROR — the request body is not application/json",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "VALIDATION_ERROR — the request body is not application/json"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL — an unexpected server error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "INTERNAL — an unexpected server error"
++                }
++              }
++            }
++          },
++          "503": {
++            "description": "UNAVAILABLE — the database is unreachable",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "UNAVAILABLE — the database is unreachable"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/api/v1/todos/{id}": {
++      "patch": {
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "type": "object",
++                "properties": {
++                  "description": {
++                    "type": "string"
++                  },
++                  "completed": {
++                    "type": "boolean"
++                  }
++                },
++                "additionalProperties": false
++              }
++            }
++          }
++        },
++        "parameters": [
++          {
++            "schema": {
++              "type": "string",
++              "format": "uuid",
++              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
++            },
++            "in": "path",
++            "name": "id",
++            "required": true
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "The updated (or unchanged) Todo",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "id": {
++                      "type": "string",
++                      "format": "uuid",
++                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
++                    },
++                    "description": {
++                      "type": "string"
++                    },
++                    "completed": {
++                      "type": "boolean"
++                    },
++                    "createdAt": {
++                      "type": "string",
++                      "format": "date-time",
++                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
++                    },
++                    "updatedAt": {
++                      "type": "string",
++                      "format": "date-time",
++                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
++                    }
++                  },
++                  "required": [
++                    "id",
++                    "description",
++                    "completed",
++                    "createdAt",
++                    "updatedAt"
++                  ],
++                  "additionalProperties": false,
++                  "description": "The updated (or unchanged) Todo"
++                }
++              }
++            }
++          },
++          "400": {
++            "description": "VALIDATION_ERROR — malformed or empty JSON, an invalid id, or a body that fails its schema or the Description rules (1–500 characters after normalization); `details`, when present, names each field",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "VALIDATION_ERROR — malformed or empty JSON, an invalid id, or a body that fails its schema or the Description rules (1–500 characters after normalization); `details`, when present, names each field"
++                }
++              }
++            }
++          },
++          "404": {
++            "description": "NOT_FOUND — no Todo has this id",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "NOT_FOUND — no Todo has this id"
++                }
++              }
++            }
++          },
++          "413": {
++            "description": "VALIDATION_ERROR — the request body is larger than 16 KiB",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "VALIDATION_ERROR — the request body is larger than 16 KiB"
++                }
++              }
++            }
++          },
++          "415": {
++            "description": "VALIDATION_ERROR — the request body is not application/json",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "VALIDATION_ERROR — the request body is not application/json"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL — an unexpected server error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "INTERNAL — an unexpected server error"
++                }
++              }
++            }
++          },
++          "503": {
++            "description": "UNAVAILABLE — the database is unreachable",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "UNAVAILABLE — the database is unreachable"
++                }
++              }
++            }
++          }
++        }
++      },
++      "delete": {
++        "parameters": [
++          {
++            "schema": {
++              "type": "string",
++              "format": "uuid",
++              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
++            },
++            "in": "path",
++            "name": "id",
++            "required": true
++          }
++        ],
++        "responses": {
++          "204": {
++            "description": "No content",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "string",
++                  "nullable": true,
++                  "enum": [
++                    null
++                  ],
++                  "description": "No content"
++                }
++              }
++            }
++          },
++          "400": {
++            "description": "VALIDATION_ERROR — malformed or empty JSON, an invalid id, or a body that fails its schema or the Description rules (1–500 characters after normalization); `details`, when present, names each field",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "VALIDATION_ERROR — malformed or empty JSON, an invalid id, or a body that fails its schema or the Description rules (1–500 characters after normalization); `details`, when present, names each field"
++                }
++              }
++            }
++          },
++          "404": {
++            "description": "NOT_FOUND — no Todo has this id",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "NOT_FOUND — no Todo has this id"
++                }
++              }
++            }
++          },
++          "500": {
++            "description": "INTERNAL — an unexpected server error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "INTERNAL — an unexpected server error"
++                }
++              }
++            }
++          },
++          "503": {
++            "description": "UNAVAILABLE — the database is unreachable",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "properties": {
++                    "error": {
++                      "type": "object",
++                      "properties": {
++                        "code": {
++                          "type": "string",
++                          "enum": [
++                            "VALIDATION_ERROR",
++                            "NOT_FOUND",
++                            "CONFLICT",
++                            "UNAVAILABLE",
++                            "INTERNAL"
++                          ]
++                        },
++                        "message": {
++                          "type": "string"
++                        },
++                        "details": {
++                          "type": "array",
++                          "items": {
++                            "type": "object",
++                            "properties": {
++                              "field": {
++                                "type": "string"
++                              },
++                              "reason": {
++                                "type": "string",
++                                "enum": [
++                                  "empty",
++                                  "too_long",
++                                  "invalid",
++                                  "unknown_field"
++                                ]
++                              }
++                            },
++                            "required": [
++                              "field",
++                              "reason"
++                            ],
++                            "additionalProperties": false
++                          }
++                        }
++                      },
++                      "required": [
++                        "code",
++                        "message"
++                      ],
++                      "additionalProperties": false
++                    }
++                  },
++                  "required": [
++                    "error"
++                  ],
++                  "additionalProperties": false,
++                  "description": "UNAVAILABLE — the database is unreachable"
++                }
++              }
++            }
++          }
++        }
++      }
++    }
++  }
++}
+diff --git a/docs/onboarding-walkthrough.md b/docs/onboarding-walkthrough.md
+new file mode 100644
+index 0000000..299b84e
+--- /dev/null
++++ b/docs/onboarding-walkthrough.md
+@@ -0,0 +1,47 @@
++# Onboarding walkthrough (Story 3.2, SM-5)
++
++A one-time check that a developer who did not build the app can get it running and explain its data flow within 15 minutes, using only `README.md` and the docs it links to.
++
++- **Date:** 2026-09-25
++- **Who:** a context-free AI agent playing "a developer who did not build the app". It had no prior knowledge of the project and read only the README and `docs/api/openapi.json`.
++- **Where:** a fresh copy of the repository (tracked files only, no `.env`, no `node_modules`) on the owner's host, as the isolated Compose project `todos-walkthrough` with `WEB_PORT=18180` and `DB_PORT=15532`, so the owner's `todos` stack was never touched. Torn down afterwards with `down -v`, for that project only.
++- **Result:** passed. **74 s** from start to the app running and usable, **179 s** for the whole walkthrough including tests and teardown. Docker images were cached on this host, so a first build on a clean machine takes a few more minutes. That is still well inside 15 minutes.
++
++> A walkthrough by a human developer is still recommended. It would also cover reading the README cold and a first image build on a clean machine.
++
++## What was run, following the README
++
++| Step                                                                                                               | Outcome                                                                                                                                                                                             |
++| ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
++| `docker compose version`, `corepack enable`, `pnpm install`                                                        | Worked as written (Node 24.21, pnpm 12.6.0).                                                                                                                                                        |
++| `cp .env.example .env`, then `docker compose up -d` (dev stack)                                                    | Could not start in this environment: the owner's dev stack already holds `127.0.0.1:9229` (the inspector port). Forced by the isolation, not a README error. The README now says the port is fixed. |
++| `docker compose -f compose.yaml up -d --build`, then `ps` until `api` is healthy                                   | Worked.                                                                                                                                                                                             |
++| `/`, `/api/v1/health` at `http://localhost:18180`                                                                  | SPA HTML served by nginx; `{"status":"ok"}`.                                                                                                                                                        |
++| Create, repeat-create, list, update and delete a Todo, with request shapes taken only from `docs/api/openapi.json` | 201, 200, 200, 200, 204, all as documented. A bad id gave 400 `VALIDATION_ERROR`, and an unknown id gave 404 `NOT_FOUND`, both in the documented envelope.                                          |
++| Live `GET /api/v1/openapi.json` vs `docs/api/openapi.json`                                                         | The same document (the live one is compact JSON).                                                                                                                                                   |
++| Upgrade: `up -d --build`, then `down` and `up -d`                                                                  | The Todo created beforehand survived both. `git pull` was skipped because the copy is not a git checkout.                                                                                           |
++| Phone path: LAN IP from `hostname -I`, then `curl http://<LAN-IP>:18180/api/v1/health`                             | 200 `{"status":"ok"}`.                                                                                                                                                                              |
++| `pnpm lint`, `pnpm typecheck`                                                                                      | Passed.                                                                                                                                                                                             |
++| `pnpm api:docs`, then diff against the committed file                                                              | No change.                                                                                                                                                                                          |
++| `pnpm test:e2e`                                                                                                    | Printed the "not yet implemented" stub message, as the README says.                                                                                                                                 |
++| `docker compose up -d db`, then `pnpm test`                                                                        | 469 tests passed (shared 46, web 257, api 166).                                                                                                                                                     |
++
++## The walker's explanation of the data flow
++
++The browser loads a React app. Every call it makes to the server goes through one small HTTP helper and uses relative `/api/v1/...` URLs. In production nginx forwards these to the API (in dev, the Vite server does), so there is one origin and no CORS. The Fastify API checks each request against Zod schemas that the browser also uses (from `packages/shared`). It then hands the request to a service layer, which applies the rules (for example tidying the Description, and treating a repeated create with the same id and text as a no-op instead of a conflict). The service calls a repository that reads and writes PostgreSQL through Drizzle. The database files live in the `todos-data` volume. The response goes back the same way, and any failure is turned into one error shape: `{error:{code,message,details?}}`.
++
++For writes, the browser does not wait. For each Todo it keeps the last state the server confirmed, plus a queue of pending changes shown on screen straight away. Changes to the same Todo are sent in order. If one fails, that Todo's generation counter is bumped, its remaining queued changes are dropped without being sent, and the Todo goes back to its last confirmed state. One toast appears, and its Retry sends the same id and payload again. Because the same id is reused, a retried create is safe to send twice.
++
++## README gaps found, and what was done
++
++| Gap the walker reported                                                                                  | Fix                                                                                                                                    |
++| -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
++| The inspector port `127.0.0.1:9229` is fixed, with no hint when it is taken                              | The README now says it is fixed and that the dev stack can't start while the port is in use.                                           |
++| Running a second copy (`COMPOSE_PROJECT_NAME`) isn't covered                                             | Added to "One mode at a time", including free `WEB_PORT`/`DB_PORT`.                                                                    |
++| Image tags (`todos-api:prod`, …) are global to the host, so copies overwrite each other's builds         | Documented: always use `--build` after switching copies (`pnpm test:stack` rebuilds the `:prod` tags too).                             |
++| `docker compose up -d db` while the production-like stack runs swaps only `db` into dev mode             | The README now says to stop that stack first.                                                                                          |
++| The live document is compact while the snapshot is pretty-printed                                        | Stated in "API documentation".                                                                                                         |
++| `pnpm db:generate` / `pnpm db:migrate` were only mentioned in the Settings table                         | Explained under "Tests and lint".                                                                                                      |
++| `hostname -I`: on hosts with many virtual interfaces, the first address may not be the LAN one           | Now says to pick the Wi-Fi or Ethernet address, e.g. from `ip -4 addr`.                                                                |
++| A `.env.example` comment says "port 5432" even after `DB_PORT` changes                                   | Not changed: the comment next to it already says to change both together.                                                              |
++| The request schema has no `maxLength` for the Description; the 1–500 rule is only in the 400 description | Not changed: the service checks the length after normalization, so the shared request schema has no length check to generate one from. |
