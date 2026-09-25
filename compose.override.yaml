@@ -3,7 +3,7 @@
 services:
   db:
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - ./docker/db-init:/docker-entrypoint-initdb.d:ro
 
@@ -18,7 +18,7 @@ services:
         "src/server.ts",
       ]
     ports:
-      - "9229:9229"
+      - "127.0.0.1:9229:9229"
     volumes:
       - .:/app
       - api-root-node-modules:/app/node_modules
