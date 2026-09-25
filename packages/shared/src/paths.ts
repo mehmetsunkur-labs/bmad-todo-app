@@ -12,3 +12,6 @@ export const TODO_PATH = `${TODOS_PATH}/:id`
 export function todoPath(id: string): string {
   return `${TODOS_PATH}/${encodeURIComponent(id)}`
 }
+
+/** The generated OpenAPI document (served live; snapshot in docs/api). */
+export const OPENAPI_PATH = `${API_PREFIX}/openapi.json`

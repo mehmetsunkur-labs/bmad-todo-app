@@ -17,7 +17,7 @@
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @todos/api db:generate",
     "db:migrate": "pnpm --filter @todos/api db:migrate",
-    "api:docs": "node -e \"console.log('api:docs: not yet implemented')\""
+    "api:docs": "pnpm --filter @todos/api api:docs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

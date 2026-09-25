@@ -2,7 +2,8 @@
 title: 'Story 3.2: Documented API and a README that gets a new developer running in 15 minutes'
 type: 'feature'
 created: '2026-09-25'
-status: 'ready-for-dev'
+status: 'done'
+baseline_revision: 'eaf5183099926ce273576919dffd54a1892215e2'
 review_loop_iteration: 0
 followup_review_recommended: false
 context:
@@ -178,6 +179,34 @@ deferred: []
   - `[low]` `[reject]` (edge-case, claim) "Without changing behaviour" isn't exactly true. — The wire behaviour is unchanged, and the existing suites pass unchanged.
   - `[medium]` `[intent_gap]` (edge-case, claim) "Every operation lists exactly its statuses" is false for DELETE. — Same root cause as the blind DELETE row.
 
+### 2026-09-25 — Review pass (after the per-route status amendment)
+- verdicts: 24 findings — high 0, medium 4, low 19, false 1, maybe-false 0
+- findings:
+  - `[false]` `[reject]` (blind) The snapshot file isn't in the diff. — carried: it's left out of the review diff because it's generated, and it is committed with the change.
+  - `[medium]` `[patch]` (blind) The DELETE 204 is documented as an `application/json` null body, but the API sends no body. — Fixed: the swagger `transform` wraps `jsonSchemaTransform` and turns any 204 into `{ type: "null", description: "No content" }`, so the snapshot now shows `{"description":"No content"}` with no `content`. A new snapshot test pins it, and the runtime empty-body test is unchanged.
+  - `[low]` `[reject]` (blind) There's no OpenAPI validator run over the snapshot. — The 204 issue was valid OpenAPI, so a validator wouldn't have caught it. An enhancement.
+  - `[low]` `[reject]` (blind) The reachability tests cover only the matrix cases, and the auto-generated `HEAD` routes are undocumented. — The other statuses are covered by the existing route suites (verification-gap confirmed this in pass 1). `HEAD` is Fastify's automatic mirror of GET, not an API operation. Documenting it would contradict the contract's exact-paths row, and disabling it would change behaviour.
+  - `[low]` `[reject]` (blind) Error replies are now serialized by the envelope schema. — carried: the existing `expectValidationError` tests check the envelopes byte-for-byte, including `details`.
+  - `[low]` `[reject]` (blind) The drift check depends on a database. — carried.
+  - `[low]` `[reject]` (blind) `openapi.ts` and `app.ts` import each other. — carried.
+  - `[low]` `[reject]` (blind) The 400 description is the same on every route. — It says "depending on the route" and lists the causes. Per-route text would be cosmetic.
+  - `[low]` `[reject]` (blind) There's no summary, `operationId` or tags, and the version is hard-coded. — carried (an enhancement).
+  - `[low]` `[patch]` (blind) The 413 test hard-codes 17 KiB. — Fixed: the payload is `BODY_LIMIT_BYTES + 1`, and the title is built from the constant.
+  - `[low]` `[patch]` (blind) The onboarding record has a stale test count and is partial. — Fixed: the count is now 474 and the staleness caveat is gone. "Partial" plus the human follow-up (owner Msunkur, the sprint-status owner convention) is intended, per the Spec Change Log.
+  - `[low]` `[reject]` (blind) Minor README details could go stale (`api:docs` prerequisites, and foreground vs `-d`). — Cosmetic, and both forms work.
+  - `[medium]` `[patch]` (intent-alignment) The 204 in the document doesn't match the wire. — Same root cause as the blind 204 finding, fixed by that patch.
+  - `[low]` `[reject]` (intent-alignment) The response schemas are now on the serialization path. — carried.
+  - `[low]` `[reject]` (intent-alignment) Reachability is tested only for the matrix rows. — Same as the blind reachability row.
+  - `[low]` `[reject]` (intent-alignment) The drift test mutates the document, not a schema. — The committed-file comparison covers the real scenario, and the helper test covers the failure message.
+  - `[low]` `[reject]` (intent-alignment) "Live equals snapshot" is checked in-process. — carried. It was also checked through nginx during implementation (`todos-docscheck` project).
+  - `[low]` `[reject]` (intent-alignment) The walkthrough surface is an agent on the prod path. — By design, per the Spec Change Log: the record is marked partial, and a human follow-up is named.
+  - `[low]` `[reject]` (intent-alignment) The descriptions and the API-local `z.null()` break "nothing hand-written". — The contract's rule is about schemas. The descriptions are prose that the contract itself requires, and the 204 marker now renders body-less.
+  - `[medium]` `[patch]` (edge-case) The 204 is documented with a JSON body. — Same root cause as the blind 204 finding, fixed.
+  - `[low]` `[reject]` (edge-case) The `HEAD` routes are undocumented. — Same as the blind reachability row.
+  - `[low]` `[reject]` (edge-case) A missing `properties` would throw a TypeError in the test. — Unlikely, and the failure would still point at the schema.
+  - `[low]` `[patch]` (edge-case) The 413 payload breaks if the limit is raised. — Same root cause as the blind 413 finding, fixed.
+  - `[medium]` `[patch]` (edge-case, claim) The snapshot's 204 contradicts "empty response". — Same root cause as the blind 204 finding, fixed.
+
 ## Design Notes
 
 - **Why document errors in the route schemas, not a post-processing transform:** it keeps the shared Zod schemas as the only source, and Fastify serializes error replies through the same `ErrorEnvelopeSchema`, which every envelope already satisfies. The unchanged existing error tests are the guard.
@@ -234,4 +263,50 @@ Blocking condition: intent gap
 **Side effects on the owner's machine:**
 - **Dev database:** the `todos_todos-data` volume was deleted and recreated at 18:29:26, before this story's implementation started, and it now holds 0 Todos. No command in this session's agent transcripts removes it, and Docker's event log here keeps only about 1 s of history, so the cause is unknown.
 - **Dev API crash:** while the patch was applied, the dev `api` container crashed on the new `@fastify/swagger` import, because its `node_modules` volume predates the dependency. Reverting removes the import. Re-applying will need `docker compose up --build -V`.
+
+## Auto Run Result (rerun after the per-route status amendment)
+
+Status: done
+
+**What was implemented:**
+- `@fastify/swagger` 9.9 serves `GET /api/v1/openapi.json` (OpenAPI 3.0.3), generated from the shared Zod schemas.
+- Every route documents every status the API can actually return, and each error uses the shared envelope with a description naming its AD-5 code.
+- `pnpm api:docs` writes the byte-stable snapshot `docs/api/openapi.json`, and a drift test guards it.
+- A root README covers the full Story 3.2 checklist.
+- An onboarding walkthrough is recorded, marked partial.
+
+**Files changed:**
+- `apps/api/src/openapi.ts` (new): swagger registration and a transform that makes the 204 body-less. It also holds `errorResponses` (built from `DESCRIPTION_MAX`/`BODY_LIMIT_BYTES`) and the database-free generator.
+- `apps/api/src/app.ts`: registers the OpenAPI plugin before the routes.
+- `apps/api/src/routes/health.ts`, `apps/api/src/routes/todos.ts`: the documented responses per route. DELETE now uses `send(null)`, and the wire output is identical.
+- `apps/api/scripts/write-openapi.ts` (new), `apps/api/package.json`, `apps/api/tsconfig.json`, root `package.json`, `pnpm-lock.yaml`: `pnpm api:docs` and the `@fastify/swagger ~9.9.0` dependency.
+- `packages/shared/src/paths.ts`: adds `OPENAPI_PATH`.
+- `.prettierignore`: excludes the snapshot.
+- `docs/api/openapi.json` (generated).
+- `apps/api/test/openapi.test.ts` (new): 13 tests, covering structure, statuses, the reachability probes, snapshot drift, a missing snapshot, the empty 204 on the wire and the body-less 204 in the document.
+- `README.md` (new).
+- `docs/onboarding-walkthrough.md` (new).
+
+**Review (after the amendment):** 24 findings.
+- Patches applied (3):
+  - medium: the 204 documented body-less
+  - low: the 413 test built from `BODY_LIMIT_BYTES`
+  - low: the walkthrough test count
+- Deferred: none.
+- Rejected: 20 lows and 1 false, each with its reason in the triage log.
+
+**Follow-up review recommendation:** false. The pass patched 1 medium and 2 lows, and no highs.
+
+**Verification:**
+- `pnpm api:docs`: byte-identical across runs.
+- `pnpm lint`, `pnpm typecheck` and `prettier --check .`: clean.
+- `pnpm test`: 474/474 (shared 46, web 257, api 171). It ran against a throwaway `postgres:18-alpine` on `127.0.0.1:25432` via `TEST_DATABASE_URL`, because the owner's dev db was stopped.
+- `pnpm test:stack`: 11/11.
+- The live document through nginx deep-equals the snapshot (isolated `todos-docscheck` project, torn down afterwards).
+
+**Residual risks:**
+- SM-5 still needs the human walkthrough named in `docs/onboarding-walkthrough.md` (owner Msunkur).
+- HEAD mirrors of the GET routes are reachable but undocumented.
+- The owner's `todos` dev stack was found recreated (18:29 BST, new empty `todos-data` volume) and later killed (19:29 BST, exit 137/143). No command in this session did either; the one-hour spacing suggests an external job on the host.
+- Restarting the dev stack needs `docker compose up --build -V`, because its `node_modules` volumes predate `@fastify/swagger`.
 
