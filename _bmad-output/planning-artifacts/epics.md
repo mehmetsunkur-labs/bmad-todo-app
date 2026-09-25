@@ -209,7 +209,7 @@ UX-DR6: The Completion checkbox.
 UX-DR7: Completed Todo row styling: a checked box, line-through text, and `muted-foreground` text. The row keeps its position, and Completed Todos are never auto-sorted.
 UX-DR8: The Row actions.
   - Edit (lucide Pencil) and Delete (lucide Trash2) are ghost buttons, 16px icons in 44px hit areas, in `muted-foreground`.
-  - On hover or focus, Edit turns `foreground` and Delete turns `destructive`.
+  - On hover or `focus-visible`, Edit turns `foreground` and Delete turns `destructive`.
   - Accessible names: "Edit todo: {Description}" and "Delete todo: {Description}".
   - On `(hover: hover) and (pointer: fine)` devices, they are hidden (opacity 0, still in the tab order) until the row is hovered or has focus inside it. Otherwise they are always visible.
 UX-DR9: The Inline edit field.
@@ -628,7 +628,7 @@ _Implements: FR8, FR10 (delete), UX-DR8, UX-DR15 (focus after delete), UX-DR17 (
 
 **Given** a Todo row
 **When** I look at its right-hand side
-**Then** there is a Delete button: a ghost button with a lucide `Trash2` icon (16 px) in a 44 px hit area, colored `muted-foreground` and turning `destructive` on hover or focus.
+**Then** there is a Delete button: a ghost button with a lucide `Trash2` icon (16 px) in a 44 px hit area, colored `muted-foreground` and turning `destructive` on hover or `focus-visible`.
 **And** its accessible name is "Delete todo: {Description}".
 **And** on devices matching `(hover: hover) and (pointer: fine)`, the row actions are hidden (opacity 0, still in the tab order) until the row is hovered or something in it has focus. On other devices they are always visible.
 
@@ -670,7 +670,7 @@ _Implements: FR6, FR10 (edit), UX-DR8, UX-DR9, UX-DR14, UX-DR15, AD-12_
 
 **Given** a Todo row
 **When** I look at the row actions
-**Then** there is an Edit button before Delete: a ghost button with a lucide `Pencil` icon that turns `foreground` on hover or focus, with the accessible name "Edit todo: {Description}".
+**Then** there is an Edit button before Delete: a ghost button with a lucide `Pencil` icon that turns `foreground` on hover or `focus-visible`, with the accessible name "Edit todo: {Description}".
 **And** the tab order within a row is checkbox, then Edit, then Delete.
 
 **Given** I click Edit, or double-click the Description on a `(hover: hover) and (pointer: fine)` device

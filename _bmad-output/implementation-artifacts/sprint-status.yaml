@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-24-2026 16:33
-last_updated: 09-26-2026 00:30
+last_updated: 09-26-2026 00:47
 project: Todo-App
 project_key: NOKEY
 tracking_system: file-system
@@ -157,7 +157,7 @@ action_items:
     action: "Apply Epic 2 spec reconciliations F9.1-F9.7 to ARCHITECTURE-SPINE, EXPERIENCE,
       DESIGN, epics.md and epic-2-context (F9)"
     owner: "PM + Architect"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
   - id: "epic-2-retro-item-15-seed-story-3-3-playwright-suite-from-the"
     epic: 2
@@ -207,7 +207,7 @@ action_items:
     action: "Reconcile DESIGN.md, mockup row geometry, spine AD-2/AD-5/AD-10, onboarding-walkthrough
       and finish-review baseline with the as-built (F8)"
     owner: "PM + Architect + UX"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
   - id: "epic-3-retro-item-22-log-dropped-hand-offs-in-deferred-work-n"
     epic: 3
@@ -215,7 +215,7 @@ action_items:
       shared dev/prod volume decision, HEAD routes, Vite dev-proxy smoke, Epic 2 item
       12 leftovers (F9)"
     owner: "PM"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
   - id: "epic-3-retro-item-23-before-closing-epic-3-human-onboarding-w"
     epic: 3
