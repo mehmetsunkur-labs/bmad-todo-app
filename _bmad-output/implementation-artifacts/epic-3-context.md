@@ -22,7 +22,7 @@ Turn the working app from Epics 1–2 into something the owner can deploy and ha
 - **Onboarding:** a developer who did not build the app runs it locally and explains its data flow within 15 minutes using only the README and API docs. This is checked once as a documented walkthrough.
 - **Test coverage:** automated tests cover every FR's consequences at the API level plus the core UI flows: add, edit, toggle, delete, and failure rollback.
 - **Browsers:** latest two versions of Chrome, Edge, Firefox, and desktop Safari, plus iOS Safari and Android Chrome.
-- **Performance:** each UI action shows within 100 ms. With 1,000 Todos, the list is interactive within 2 s on office broadband. API p95 is 300 ms or less at the server under single-user load.
+- **Performance:** each UI action shows within 100 ms. With 1,000 Todos, the list is interactive within 2 s on office broadband. API p95 is 300 ms or less at the server under single-user load. Perceived speed is measured in automated UI tests (95% of actions reflected within 100 ms).
 - **Accessibility:** WCAG 2.1 AA, meaning full keyboard operation, visible focus, accessible labels, and text contrast of at least 4.5:1. The app stays usable at 200% zoom and 320 px width, with no horizontal scroll and touch targets of at least 44×44 px.
 - **Finish:** "Todos" in the header and tab title, a favicon, one consistent design across List States, no placeholder text, no console errors, and no layout jumps.
 
@@ -47,7 +47,7 @@ Turn the working app from Epics 1–2 into something the owner can deploy and ha
   - Fail any test that triggers a browser console error.
 - **Accessibility scan:** `@axe-core/playwright`, with the version verified at implementation time. Run it in light and dark mode; dark mode follows `prefers-color-scheme` only, with no in-app toggle.
 - **Stack pins are binding** (Node 24, pnpm 12.6, TS 6.0, Playwright 1.63, and the rest). Allowed imports are only web → shared and api → shared.
-- **Existing smoke-test gap:** the proxy has only been checked by manual curl. Add an automated test that requests `/api/v1/health` through the proxy (nginx in the Compose stack), expects `{"status":"ok"}`, and confirms the path arrives unchanged.
+- **Proxy smoke coverage:** the nginx half is now automated by Story 3.1's stack smoke test (`pnpm test:stack`: `/api/v1/health` through nginx returns `{"status":"ok"}` with the path unchanged). The Vite dev-proxy half is still only checked by hand and remains an open deferred item.
 
 ## UX & Interaction Patterns
 
@@ -63,6 +63,6 @@ Turn the working app from Epics 1–2 into something the owner can deploy and ha
 ## Cross-Story Dependencies
 
 - Depends on Epics 1–2 being complete: the dev Compose stack, the shared contract, all CRUD endpoints, `todo-sync`, and every UI flow.
-- 3.1's production stack is the target that 3.3's E2E suite, including the `down`/`up` durability test, and 3.4's performance and accessibility checks run against.
-- 3.2's README documents 3.1's deploy command and volume behaviour, so write it after 3.1 settles or update it once 3.1 lands.
+- Story 3.1 is done: the production stack exists and is the target that 3.3's E2E suite, including the `down`/`up` durability test, and 3.4's performance and accessibility checks run against.
+- 3.2's README documents 3.1's deploy command, `WEB_PORT`, and volume behaviour; 3.1 has landed, so document what it actually ships.
 - 3.3 and 3.4 share the Playwright setup in `e2e/`. 3.4's axe scan and 1,000-Todo seed run can build on 3.3's harness.

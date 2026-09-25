@@ -13,6 +13,7 @@ import {
   registerErrorHandlers,
 } from "./errors"
 import { createLogController, registerRequestLogging } from "./logger"
+import { registerOpenApi } from "./openapi"
 import { createRepositories } from "./repositories"
 import { healthRoutes } from "./routes/health"
 import { todoRoutes } from "./routes/todos"
@@ -48,6 +49,8 @@ export function buildApp({ pool, logger }: BuildAppOptions): FastifyInstance {
   registerErrorHandlers(app)
   registerRequestContext(app)
   registerRequestLogging(app)
+  // Before the routes: swagger collects them through `onRoute`.
+  registerOpenApi(app)
 
   const repositories = createRepositories(pool)
   const healthService = createHealthService({

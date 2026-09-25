@@ -10,9 +10,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "api:docs": "tsx scripts/write-openapi.ts"
   },
   "dependencies": {
+    "@fastify/swagger": "~9.9.0",
     "@fastify/type-provider-zod": "^1.0.0",
     "@todos/shared": "workspace:*",
     "drizzle-orm": "^0.45.3",

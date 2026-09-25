@@ -8,7 +8,9 @@ import {
   UpdateTodoRequestSchema,
 } from "@todos/shared"
 import type { FastifyPluginAsyncZod } from "@fastify/type-provider-zod"
+import { z } from "zod"
 
+import { errorResponses } from "../openapi"
 import type { TodoService } from "../services/todo-service"
 
 export function todoRoutes(deps: {
@@ -17,7 +19,14 @@ export function todoRoutes(deps: {
   return async (app) => {
     app.get(
       TODOS_PATH,
-      { schema: { response: { 200: TodoListResponseSchema } } },
+      {
+        schema: {
+          response: {
+            200: TodoListResponseSchema.describe("Every Todo, newest first"),
+            ...errorResponses(400, 500, 503),
+          },
+        },
+      },
       async (request) => {
         const todos = await deps.todoService.list(request.ctx)
         return { todos }
@@ -29,7 +38,13 @@ export function todoRoutes(deps: {
       {
         schema: {
           body: CreateTodoRequestSchema,
-          response: { 200: TodoSchema, 201: TodoSchema },
+          response: {
+            200: TodoSchema.describe(
+              "Already stored with the same Description (idempotent repeat)"
+            ),
+            201: TodoSchema.describe("Created"),
+            ...errorResponses(400, 409, 413, 415, 500, 503),
+          },
         },
       },
       async (request, reply) => {
@@ -47,7 +62,10 @@ export function todoRoutes(deps: {
         schema: {
           params: TodoIdParamsSchema,
           body: UpdateTodoRequestSchema,
-          response: { 200: TodoSchema },
+          response: {
+            200: TodoSchema.describe("The updated (or unchanged) Todo"),
+            ...errorResponses(400, 404, 413, 415, 500, 503),
+          },
         },
       },
       async (request) =>
@@ -56,10 +74,20 @@ export function todoRoutes(deps: {
 
     app.delete(
       TODO_PATH,
-      { schema: { params: TodoIdParamsSchema } },
+      {
+        schema: {
+          params: TodoIdParamsSchema,
+          response: {
+            // Documents the empty 204; the handler sends no body at all.
+            204: z.null().describe("No content"),
+            ...errorResponses(400, 404, 413, 415, 500, 503),
+          },
+        },
+      },
       async (request, reply) => {
         await deps.todoService.delete(request.ctx, request.params.id)
-        return reply.code(204).send()
+        // `null` matches the documented 204 schema; Fastify sends no body.
+        return reply.code(204).send(null)
       }
     )
   }
