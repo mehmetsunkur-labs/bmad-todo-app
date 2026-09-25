@@ -1,0 +1,54 @@
+# Dev stack, loaded automatically by `docker compose up`:
+# Vite HMR, tsx watch with the inspector, db port, and the todos_test database.
+services:
+  db:
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - ./docker/db-init:/docker-entrypoint-initdb.d:ro
+
+  api:
+    build:
+      target: dev
+    command:
+      [
+        "./node_modules/.bin/tsx",
+        "watch",
+        "--inspect=0.0.0.0:9229",
+        "src/server.ts",
+      ]
+    ports:
+      - "9229:9229"
+    volumes:
+      - .:/app
+      - api-root-node-modules:/app/node_modules
+      - api-node-modules:/app/apps/api/node_modules
+      - api-shared-node-modules:/app/packages/shared/node_modules
+
+  web:
+    build:
+      target: dev
+    command:
+      [
+        "./node_modules/.bin/vite",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8080",
+        "--strictPort",
+      ]
+    environment:
+      API_PROXY_TARGET: http://api:3000
+    volumes:
+      - .:/app
+      - web-root-node-modules:/app/node_modules
+      - web-node-modules:/app/apps/web/node_modules
+      - web-shared-node-modules:/app/packages/shared/node_modules
+
+volumes:
+  api-root-node-modules:
+  api-node-modules:
+  api-shared-node-modules:
+  web-root-node-modules:
+  web-node-modules:
+  web-shared-node-modules:

@@ -1,0 +1,9 @@
+node_modules/
+coverage/
+dist/
+.pnpm-store/
+pnpm-lock.yaml
+_bmad/
+_bmad-output/
+.claude/
+apps/api/drizzle/meta/

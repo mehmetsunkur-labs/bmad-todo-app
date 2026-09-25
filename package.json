@@ -1,0 +1,32 @@
+{
+  "name": "todos",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.6.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "docker compose up",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "test:e2e": "node -e \"console.log('test:e2e: not yet implemented')\"",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @todos/api db:generate",
+    "db:migrate": "pnpm --filter @todos/api db:migrate",
+    "api:docs": "node -e \"console.log('api:docs: not yet implemented')\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.11.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.9",
+    "prettier-plugin-tailwindcss": "^0.8.1",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.70.1"
+  }
+}
