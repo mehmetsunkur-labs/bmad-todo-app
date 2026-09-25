@@ -1,10 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react"
 import { v7 as uuidv7 } from "uuid"
-import {
-  COUNTER_THRESHOLD,
-  DESCRIPTION_MAX,
-  normalizeDescription,
-} from "@todos/shared"
+import { DESCRIPTION_MAX, normalizeDescription } from "@todos/shared"
 
 import { useCreateTodo } from "@/api/hooks/use-create-todo"
 import { Button } from "@/components/ui/button"
@@ -13,16 +9,8 @@ import { announce } from "@/lib/announce"
 import { HOVER_POINTER_QUERY, matchesMedia } from "@/lib/use-media-query"
 
 import { CharacterCounter } from "./character-counter"
+import { counterAnnouncement } from "./counter-announcement"
 import { registerAddRowController, showCreateFailure } from "./create-failure"
-
-/** The counter text, when a change in length should be announced. */
-function counterAnnouncement(previous: number, next: number): string | null {
-  const crossed = (limit: number) => previous < limit && next >= limit
-  if (crossed(DESCRIPTION_MAX) || crossed(COUNTER_THRESHOLD)) {
-    return `${next} / ${DESCRIPTION_MAX}`
-  }
-  return null
-}
 
 /**
  * The Add row: a `<form>` with the "New todo" input and the primary "Add"

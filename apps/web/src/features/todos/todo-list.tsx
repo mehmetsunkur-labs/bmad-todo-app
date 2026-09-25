@@ -6,9 +6,10 @@ import {
   useState,
 } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { compareTodos, type Todo } from "@todos/shared"
+import { compareTodos, normalizeDescription, type Todo } from "@todos/shared"
 
 import { useDeleteTodo } from "@/api/hooks/use-delete-todo"
+import { useEditTodo } from "@/api/hooks/use-edit-todo"
 import { useRetryTodos, useTodosQuery } from "@/api/hooks/use-todos-query"
 import { useToggleTodo } from "@/api/hooks/use-toggle-todo"
 import { TODOS_QUERY_KEY } from "@/api/query-client"
@@ -21,6 +22,7 @@ import {
   registerDeleteFocusController,
   showDeleteFailure,
 } from "./delete-failure"
+import { registerEditController, showEditFailure } from "./edit-failure"
 import { EmptyState, LoadErrorState, LoadingState } from "./list-states"
 import { RowEntranceContext } from "./row-entrance"
 import { TodoRow } from "./todo-row"
@@ -89,6 +91,13 @@ function pruneExiting(list: readonly Todo[], exiting: ExitingRows) {
 
 const EMPTY: readonly Todo[] = []
 
+/** The one open edit field: its row, its starting text, and whether it takes focus. */
+interface OpenEdit {
+  readonly id: string
+  readonly text: string
+  readonly focus: boolean
+}
+
 /**
  * The Todo List, always in exactly one List State, inside the list region: a
  * `tabIndex={-1}` container that stays mounted across states. "Try again"
@@ -106,6 +115,12 @@ const EMPTY: readonly Todo[] = []
  * else the Add input, and "Todo deleted" is announced. The deleted row stays
  * as an exiting copy until its exit motion ends (the Empty state waits for
  * it), or until the id is back in the list (a failed delete's rollback).
+ *
+ * Edit: at most one edit field is open per list. Opening another commits
+ * the open one (its blur saves it first). A save normalizes the text; empty
+ * or unchanged text just closes the field, anything else applies the edit
+ * at once, announces "Todo updated" and closes. The list registers the edit
+ * controller the edit failure handler reads.
  */
 export function TodoList() {
   const query = useTodosQuery()
@@ -113,6 +128,7 @@ export function TodoList() {
   const retry = useRetryTodos()
   const toggle = useToggleTodo(showToggleFailure)
   const deleteTodo = useDeleteTodo(showDeleteFailure)
+  const editTodo = useEditTodo(showEditFailure)
   const regionRef = useRef<HTMLDivElement>(null)
   const listLoaded = useRef(false)
   const list = query.data ?? EMPTY
@@ -124,6 +140,28 @@ export function TodoList() {
     setExiting((current) => pruneExiting(list, current))
   }
   const rows = displayedRows(list, exiting)
+
+  const [edit, setEdit] = useState<OpenEdit | null>(null)
+  // An open edit whose row left the list, or started exiting, is closed.
+  if (edit && !rows.some((row) => !row.exiting && row.todo.id === edit.id)) {
+    setEdit(null)
+  }
+  // The open edit, written at once by the handlers (and synced with each
+  // render), so a save or the failure handler never reads a stale one.
+  const openEdit = useRef(edit)
+  // The open field's current text (it reports every change).
+  const draft = useRef("")
+  useLayoutEffect(() => {
+    openEdit.current = edit
+  })
+  const setOpenEdit = useCallback(
+    (next: OpenEdit | null) => {
+      openEdit.current = next
+      if (next) draft.current = next.text
+      setEdit(next)
+    },
+    [setEdit]
+  )
 
   // The latest render, for the stable delete callback.
   const latest = useRef({ list, rows })
@@ -156,6 +194,17 @@ export function TodoList() {
     const cached = queryClient.getQueryData<Todo[]>(TODOS_QUERY_KEY)
     if (!cached?.some((todo) => todo.id === id)) focusRowId.current = null
   })
+
+  useEffect(
+    () =>
+      registerEditController({
+        openEditId: () => openEdit.current?.id ?? null,
+        reopen: (id, text, focus) => setOpenEdit({ id, text, focus }),
+        containsFocus: (id) =>
+          !!rowOf(regionRef.current, id)?.contains(document.activeElement),
+      }),
+    [setOpenEdit]
+  )
 
   // Passive effects run after the rows' layout effects, so the rows of the
   // commit that first shows the loaded list still see `false`.
@@ -190,6 +239,51 @@ export function TodoList() {
     [deleteTodo]
   )
 
+  const closeEdit = useCallback(
+    (id: string) => {
+      if (openEdit.current?.id === id) setOpenEdit(null)
+    },
+    [setOpenEdit]
+  )
+
+  const handleSaveEdit = useCallback(
+    (todo: Todo, text: string) => {
+      // Only the open edit saves (a field already committed or closed may
+      // still fire blur as it unmounts). The row focuses Edit after Enter.
+      if (openEdit.current?.id !== todo.id) return
+      setOpenEdit(null)
+      const description = normalizeDescription(text)
+      if (!description || description === todo.description) return
+      editTodo({ id: todo.id, description })
+      announce("Todo updated")
+    },
+    [editTodo, setOpenEdit]
+  )
+
+  const handleEdit = useCallback(
+    (id: string) => {
+      const current = openEdit.current
+      if (current?.id === id) {
+        rowOf(regionRef.current, id)?.querySelector("textarea")?.focus()
+        return
+      }
+      // Commit the open edit as its blur would (it may not have focus).
+      if (current) {
+        const open = latest.current.list.find((t) => t.id === current.id)
+        if (open) handleSaveEdit(open, draft.current)
+        else setOpenEdit(null)
+      }
+      const todo = latest.current.list.find((t) => t.id === id)
+      if (!todo) return
+      setOpenEdit({ id, text: todo.description, focus: true })
+    },
+    [handleSaveEdit, setOpenEdit]
+  )
+
+  const handleDraft = useCallback((text: string) => {
+    draft.current = text
+  }, [])
+
   const handleExitDone = useCallback((id: string) => {
     setExiting((current) => {
       const row = current.get(id)
@@ -214,6 +308,11 @@ export function TodoList() {
             onRetry={handleRetry}
             onToggle={toggle}
             onDelete={handleDelete}
+            edit={edit}
+            onEdit={handleEdit}
+            onSaveEdit={handleSaveEdit}
+            onCancelEdit={closeEdit}
+            onDraft={handleDraft}
             onExitDone={handleExitDone}
           />
         </RowEntranceContext>
@@ -222,18 +321,23 @@ export function TodoList() {
   )
 }
 
+/** A rendered, non-exiting row. */
+function rowOf(region: HTMLElement | null, id: string): HTMLElement | null {
+  for (const li of region?.querySelectorAll<HTMLElement>("li[data-todo-id]") ??
+    []) {
+    if (li.dataset.todoId === id && !li.hasAttribute("inert")) return li
+  }
+  return null
+}
+
 /** A rendered, non-exiting row's checkbox. */
 function checkboxOf(
   region: HTMLElement | null,
   id: string
 ): HTMLElement | null {
-  for (const li of region?.querySelectorAll<HTMLElement>("li[data-todo-id]") ??
-    []) {
-    if (li.dataset.todoId === id && !li.hasAttribute("inert")) {
-      return li.querySelector<HTMLElement>('[role="checkbox"]')
-    }
-  }
-  return null
+  return (
+    rowOf(region, id)?.querySelector<HTMLElement>('[role="checkbox"]') ?? null
+  )
 }
 
 function ListState({
@@ -242,6 +346,11 @@ function ListState({
   onRetry,
   onToggle,
   onDelete,
+  edit,
+  onEdit,
+  onSaveEdit,
+  onCancelEdit,
+  onDraft,
   onExitDone,
 }: {
   status: ReturnType<typeof useTodosQuery>["status"]
@@ -249,6 +358,11 @@ function ListState({
   onRetry: () => void
   onToggle: ReturnType<typeof useToggleTodo>
   onDelete: (todo: Todo) => void
+  edit: OpenEdit | null
+  onEdit: (id: string) => void
+  onSaveEdit: (todo: Todo, text: string) => void
+  onCancelEdit: (id: string) => void
+  onDraft: (text: string) => void
   onExitDone: (id: string) => void
 }) {
   if (status === "pending") return <LoadingState />
@@ -257,16 +371,26 @@ function ListState({
 
   return (
     <ul aria-label="Todos">
-      {rows.map(({ todo, exiting }) => (
-        <TodoRow
-          key={todo.id}
-          todo={todo}
-          exiting={exiting}
-          onToggle={onToggle}
-          onDelete={onDelete}
-          onExitDone={onExitDone}
-        />
-      ))}
+      {rows.map(({ todo, exiting }) => {
+        const open = edit?.id === todo.id ? edit : null
+        return (
+          <TodoRow
+            key={todo.id}
+            todo={todo}
+            exiting={exiting}
+            editing={!!open}
+            editText={open?.text}
+            editAutoFocus={open?.focus}
+            onToggle={onToggle}
+            onDelete={onDelete}
+            onEdit={onEdit}
+            onSaveEdit={onSaveEdit}
+            onCancelEdit={onCancelEdit}
+            onDraft={onDraft}
+            onExitDone={onExitDone}
+          />
+        )
+      })}
     </ul>
   )
 }
