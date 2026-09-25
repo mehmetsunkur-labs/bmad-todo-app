@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { jsonResponse, makeTodo, fakeAbortSignalTimeout } from "@/test/render"
 
-import { HttpError, listTodos, request } from "./http"
+import { HttpError, createTodo, listTodos, request } from "./http"
 
 const fetchMock = vi.fn<typeof fetch>()
 
@@ -273,5 +273,59 @@ describe("http request", () => {
     stubFetch()
     fetchMock.mockResolvedValue(jsonResponse([makeTodo()]))
     expect((await failure(listTodos())).kind).toBe("INTERNAL")
+  })
+})
+
+describe("createTodo", () => {
+  const body = {
+    id: "0199a0b2-3c4d-7e8f-9a0b-1c2d3e4f5a6b",
+    description: "Buy milk",
+  }
+
+  it.each([201, 200])(
+    "POSTs the JSON body and resolves a %i with the parsed Todo",
+    async (status) => {
+      stubFetch()
+      const todo = makeTodo(body)
+      fetchMock.mockResolvedValue(jsonResponse({ ...todo, extra: 1 }, status))
+
+      await expect(createTodo(body)).resolves.toEqual(todo)
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const [path, init] = fetchMock.mock.calls[0]!
+      expect(path).toBe("/api/v1/todos")
+      expect(init?.method).toBe("POST")
+      expect(init?.headers).toEqual({ "Content-Type": "application/json" })
+      expect(JSON.parse(init?.body as string)).toEqual(body)
+      expect(init?.signal).toBeInstanceOf(AbortSignal)
+    }
+  )
+
+  it("keeps the envelope's details (too_long) on a 400", async () => {
+    stubFetch()
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "too long",
+            details: [{ field: "description", reason: "too_long" }],
+          },
+        },
+        400
+      )
+    )
+    const error = await failure(createTodo(body))
+    expect(error.kind).toBe("VALIDATION_ERROR")
+    expect(error.details).toEqual([
+      { field: "description", reason: "too_long" },
+    ])
+    expect(error.message).not.toContain("too long")
+  })
+
+  it("classifies a success body that isn't a Todo as INTERNAL", async () => {
+    stubFetch()
+    fetchMock.mockResolvedValue(jsonResponse({ todos: [] }, 201))
+    expect((await failure(createTodo(body))).kind).toBe("INTERNAL")
   })
 })

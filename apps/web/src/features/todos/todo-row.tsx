@@ -1,18 +1,31 @@
-import { memo } from "react"
+import { memo, useContext, useLayoutEffect, useRef } from "react"
 
 import type { Todo } from "@todos/shared"
 
 import { CreatedAt } from "./created-at"
+import { animateRowEntrance, RowEntranceContext } from "./row-entrance"
 
 /**
  * One Todo row. Until Epic 2 adds the Completion checkbox and Row actions it
  * is a single column: the Description, then Created At below it. Transparent,
  * no hover background, and not clickable itself. The Description is React
  * text only: HTML shows literally, URLs are not linked, nothing is truncated.
+ * A row added after the list loaded expands its height on mount; a pending
+ * Todo looks exactly like a confirmed one.
  */
 export const TodoRow = memo(function TodoRow({ todo }: { todo: Todo }) {
+  const rowRef = useRef<HTMLLIElement>(null)
+  const listLoaded = useContext(RowEntranceContext)
+
+  useLayoutEffect(() => {
+    if (listLoaded.current && rowRef.current) animateRowEntrance(rowRef.current)
+  }, [listLoaded])
+
   return (
-    <li className="group/row flex min-h-touch-target flex-col border-b py-row-padding-y">
+    <li
+      ref={rowRef}
+      className="group/row flex min-h-touch-target flex-col border-b py-row-padding-y"
+    >
       <p className="text-todo-description wrap-anywhere">{todo.description}</p>
       <CreatedAt iso={todo.createdAt} />
     </li>

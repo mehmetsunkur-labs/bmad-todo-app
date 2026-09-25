@@ -1,12 +1,20 @@
-import type { QueryClient } from "@tanstack/react-query"
-import type { Todo } from "@todos/shared"
+import {
+  MutationObserver,
+  type MutationObserverOptions,
+  type QueryClient,
+} from "@tanstack/react-query"
+import { compareTodos, type Todo } from "@todos/shared"
+
+import { TODOS_QUERY_KEY } from "./query-client"
 
 /**
- * An optimistic operation not yet confirmed by the server. Story 1.4 and
- * Epic 2 define the concrete ops (create, edit, toggle, delete).
+ * An optimistic operation not yet confirmed by the server. `apply` derives
+ * the rendered Todo from the state before it (`null` = no Todo). Story 1.4
+ * defines the create op; Epic 2 adds edit, toggle, and delete.
  */
 export interface PendingOp {
   readonly kind: string
+  apply(previous: Todo | null): Todo | null
 }
 
 /**
@@ -62,4 +70,174 @@ export function getTodoSync(queryClient: QueryClient): TodoSync {
     syncByClient.set(queryClient, sync)
   }
   return sync
+}
+
+/**
+ * The optimistic create: a new, active Todo with the client's current time
+ * as a provisional `createdAt`/`updatedAt`, replaced by the server's values
+ * on success. It never overwrites a Todo the server already confirmed.
+ */
+export function createOp(
+  id: string,
+  description: string,
+  now: string = new Date().toISOString()
+): PendingOp {
+  return {
+    kind: "create",
+    apply: (previous) =>
+      previous ?? {
+        id,
+        description,
+        completed: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+  }
+}
+
+/** A Todo's rendered state: `confirmed` with its `pending` ops applied in order. */
+export function renderedTodo(sync: TodoSync, id: string): Todo | null {
+  let state = sync.confirmed.get(id) ?? null
+  for (const op of sync.pending.get(id) ?? []) state = op.apply(state)
+  return state
+}
+
+/**
+ * Writes that one id's rendered state into `['todos']`: replaces, inserts, or
+ * removes it, placed by `compareTodos`. Every other row keeps its object, and
+ * no whole-list snapshot is ever restored.
+ */
+export function renderTodo(queryClient: QueryClient, id: string): void {
+  const todo = renderedTodo(getTodoSync(queryClient), id)
+  queryClient.setQueryData<Todo[]>(TODOS_QUERY_KEY, (list) => {
+    if (!list) return list
+    const others = list.filter((t) => t.id !== id)
+    if (!todo) return others.length === list.length ? list : others
+    const index = others.findIndex((t) => compareTodos(todo, t) < 0)
+    const at = index === -1 ? others.length : index
+    return [...others.slice(0, at), todo, ...others.slice(at)]
+  })
+}
+
+/**
+ * Thrown by `mutationFn`, without a network call, when an earlier op on the
+ * same Todo failed after this one was queued (its generation changed).
+ */
+export class DroppedError extends Error {
+  constructor() {
+    super("Dropped: an earlier change to this todo failed")
+    this.name = "DroppedError"
+  }
+}
+
+export interface TodoMutationFailure<TVars> {
+  readonly vars: TVars
+  readonly error: unknown
+  /** Runs the same mutation again with the same variables (same `id`). */
+  readonly retry: () => void
+}
+
+export interface TodoMutationConfig<TVars extends { id: string }> {
+  /** The optimistic op for these variables. */
+  op(vars: TVars): PendingOp
+  /** The HTTP call; resolves to the confirmed Todo, or `null` once deleted. */
+  request(vars: TVars): Promise<Todo | null>
+  /** Called exactly once per real failure, after the rollback. */
+  onFailure(failure: TodoMutationFailure<TVars>): void
+}
+
+export interface TodoMutation<TVars extends { id: string }> {
+  readonly kind: string
+  /** The TanStack Query options for one write, scoped to `vars.id`. */
+  options(
+    queryClient: QueryClient,
+    vars: TVars
+  ): MutationObserverOptions<Todo | null, unknown, TVars, unknown>
+  /** Runs one write. Never rejects: failures go to `onFailure`. */
+  mutate(queryClient: QueryClient, vars: TVars): Promise<void>
+}
+
+/**
+ * The single write helper (AD-12). Every write to one Todo runs in the
+ * mutation scope `{ id }`, so writes to the same Todo run in order:
+ *
+ * - `onMutate`: record `generation(id)`, append the op, re-render the id.
+ * - `mutationFn`: if the generation changed, throw `DroppedError` (no fetch).
+ * - `onSuccess`: set `confirmed(id)`, remove the op, re-render.
+ * - `onError` with `DroppedError`: remove the op, nothing else.
+ * - `onError` otherwise: bump the generation, clear `pending(id)`, re-render
+ *   from `confirmed(id)`, and call `onFailure` exactly once.
+ *
+ * Never calls `invalidateQueries`, and keeps the pinned mutation defaults.
+ */
+export function createTodoMutation<TVars extends { id: string }>(
+  kind: string,
+  config: TodoMutationConfig<TVars>
+): TodoMutation<TVars> {
+  const mutation: TodoMutation<TVars> = {
+    kind,
+    options(queryClient, vars) {
+      const sync = getTodoSync(queryClient)
+      const { id } = vars
+      // Per-write state: mutationFn doesn't receive onMutate's result.
+      let recordedGeneration = 0
+      let op: PendingOp | undefined
+
+      function removeOp() {
+        const ops = sync.pending.get(id)
+        if (!ops || !op) return
+        const rest = ops.filter((o) => o !== op)
+        if (rest.length > 0) sync.pending.set(id, rest)
+        else sync.pending.delete(id)
+      }
+
+      return {
+        mutationKey: ["todos", kind],
+        scope: { id },
+        onMutate: () => {
+          recordedGeneration = sync.generation.get(id) ?? 0
+          op = config.op(vars)
+          sync.pending.set(id, [...(sync.pending.get(id) ?? []), op])
+          renderTodo(queryClient, id)
+        },
+        mutationFn: async () => {
+          if ((sync.generation.get(id) ?? 0) !== recordedGeneration) {
+            throw new DroppedError()
+          }
+          return config.request(vars)
+        },
+        onSuccess: (todo) => {
+          sync.confirmed.set(id, todo)
+          removeOp()
+          renderTodo(queryClient, id)
+        },
+        onError: (error) => {
+          if (error instanceof DroppedError) {
+            removeOp()
+            return
+          }
+          sync.generation.set(id, (sync.generation.get(id) ?? 0) + 1)
+          sync.pending.delete(id)
+          renderTodo(queryClient, id)
+          config.onFailure({
+            vars,
+            error,
+            retry: () => void mutation.mutate(queryClient, vars),
+          })
+        },
+      }
+    },
+    async mutate(queryClient, vars) {
+      const observer = new MutationObserver(
+        queryClient,
+        mutation.options(queryClient, vars)
+      )
+      try {
+        await observer.mutate(vars)
+      } catch {
+        // Already handled in onError (rollback + onFailure, or dropped).
+      }
+    },
+  }
+  return mutation
 }
