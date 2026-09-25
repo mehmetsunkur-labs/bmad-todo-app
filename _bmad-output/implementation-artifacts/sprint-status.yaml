@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-24-2026 16:33
-last_updated: 09-25-2026 15:27
+last_updated: 09-25-2026 16:21
 project: Todo-App
 project_key: NOKEY
 tracking_system: file-system
@@ -118,7 +118,7 @@ action_items:
     action: "Give the inline edit field a visible focus-ring indicator (drop focus-visible:ring-0
       or add the 2px outline) with a test/browser check (F2)"
     owner: "Dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
   - id: "epic-2-retro-item-10-focus-after-removal-for-any-removed-focu"
     epic: 2
@@ -126,7 +126,7 @@ action_items:
       failed create with queued write), reusing 2.3 next/previous/Add; treat the list
       region as free focus; retire deferred-work 404 entry (F3)"
     owner: "Dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
   - id: "epic-2-retro-item-11-acknowledge-a-delete-dropped-behind-a-fa"
     epic: 2
@@ -134,7 +134,7 @@ action_items:
       and focus restore instead of reopening edit or restoring Add text; pin 500 and
       404 variants; reconcile FR-10 wording (F1)"
     owner: "Dev + PM"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
   - id: "epic-2-retro-item-12-resolve-dropped-hand-offs-loading-skelet"
     epic: 2
