@@ -10,7 +10,7 @@
     "dev": "docker compose up",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "test:e2e": "node -e \"console.log('test:e2e: not yet implemented')\"",
+    "test:e2e": "pnpm --filter @todos/e2e test:e2e",
     "test:stack": "node --test scripts/stack-smoke.test.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
