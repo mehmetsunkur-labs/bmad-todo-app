@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-24-2026 16:33
-last_updated: 09-25-2026 21:50
+last_updated: 09-25-2026 22:04
 project: Todo-App
 project_key: NOKEY
 tracking_system: file-system
@@ -54,7 +54,7 @@ development_status:
   3-2-documented-api-and-a-readme-that-gets-a-new-developer-runnin: done
   3-3-end-to-end-suite-proving-the-core-flows-rollback-and-durabil: done
   3-4-finished-product-accessibility-and-performance-check: done
-  epic-3-retrospective: optional
+  epic-3-retrospective: done
 action_items:
   - id: "epic-1-retro-item-1-reuse-the-failed-create-id-when-restored"
     epic: 1
@@ -97,7 +97,7 @@ action_items:
     action: "Every UI story runs a Playwright check against the dev stack before merge
       (P1)"
     owner: "Msunkur"
-    status: in-progress
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-25.md"
   - id: "epic-1-retro-item-7-run-the-walkthrough-incl-detail-pass-and"
     epic: 1
@@ -142,7 +142,7 @@ action_items:
       wire-contract fixture for PATCH/DELETE, log oncancel and Vite shared-watch gap
       in deferred-work (F4, P5)"
     owner: "Dev + PM"
-    status: open
+    status: in-progress
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
   - id: "epic-2-retro-item-13-before-more-ui-work-extract-todolist-edi"
     epic: 2
@@ -164,7 +164,7 @@ action_items:
     action: "Seed Story 3.3 Playwright suite from the Epic 2 browser checks (toggle,
       delete, edit, cross-story flow) (P1)"
     owner: "Dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
   - id: "epic-2-retro-item-16-planning-write-cross-story-hand-offs-int"
     epic: 2
@@ -174,3 +174,68 @@ action_items:
     owner: "PM + Architect"
     status: open
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
+  - id: "epic-3-retro-item-17-fix-dev-stack-dependency-refresh-anonymo"
+    epic: 3
+    action: "Fix dev-stack dependency refresh: anonymous node_modules mounts or documented
+      named-volume reset, plus a dev-stack boot check in test:stack (F1)"
+    owner: "Dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
+  - id: "epic-3-retro-item-18-give-test-stack-and-test-e2e-their-own-i"
+    epic: 3
+    action: "Give test:stack and test:e2e their own image tags so tests never rebuild
+      the owner todos-*:prod images (F2)"
+    owner: "Dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
+  - id: "epic-3-retro-item-19-harden-harnesses-smoke_web_port-env-pref"
+    epic: 3
+    action: "Harden harnesses: SMOKE_WEB_PORT, .env preflight, lint and typecheck
+      scripts/*.mjs and e2e/scripts/*.mjs (F3, F4)"
+    owner: "Dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
+  - id: "epic-3-retro-item-20-qualify-openapi-readme-for-gateway-non-j"
+    epic: 3
+    action: "Qualify OpenAPI/README for gateway non-JSON 502/504/413 and align nginx
+      client_max_body_size with the 16 KiB API limit (F7)"
+    owner: "Dev + Architect"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
+  - id: "epic-3-retro-item-21-reconcile-design-md-mockup-row-geometry"
+    epic: 3
+    action: "Reconcile DESIGN.md, mockup row geometry, spine AD-2/AD-5/AD-10, onboarding-walkthrough
+      and finish-review baseline with the as-built (F8)"
+    owner: "PM + Architect + UX"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
+  - id: "epic-3-retro-item-22-log-dropped-hand-offs-in-deferred-work-n"
+    epic: 3
+    action: "Log dropped hand-offs in deferred-work: nginx gzip/security headers,
+      shared dev/prod volume decision, HEAD routes, Vite dev-proxy smoke, Epic 2 item
+      12 leftovers (F9)"
+    owner: "PM"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
+  - id: "epic-3-retro-item-23-before-closing-epic-3-human-onboarding-w"
+    epic: 3
+    action: "Before closing Epic 3: human onboarding walkthrough on both stacks, desktop+phone
+      visual review vs mockup, real phone on LAN, then bmad-walkthrough and mark epic-3
+      done (F10)"
+    owner: "Msunkur"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
+  - id: "epic-3-retro-item-24-make-test-stack-and-test-e2e-a-required"
+    epic: 3
+    action: "Make test:stack and test:e2e a required pre-merge step (checklist or
+      Linux CI) and run layout quality checks in WebKit too (F5)"
+    owner: "Dev + Msunkur"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
+  - id: "epic-3-retro-item-25-planning-rule-probe-runtime-facts-from-t"
+    epic: 3
+    action: "Planning rule: probe runtime facts from the architecture against the
+      running system before freezing them into an intent contract (P1)"
+    owner: "PM + Architect"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
