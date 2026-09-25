@@ -7,6 +7,7 @@ import {
   TODO_PATH,
   TodoIdParamsSchema,
   TodoListResponseSchema,
+  todoPath,
   TodoSchema,
   UpdateTodoRequestSchema,
 } from "../src"
@@ -144,6 +145,18 @@ describe("CreateTodoRequestSchema", () => {
 describe("TODO_PATH", () => {
   it("is the single-Todo route under the todos path", () => {
     expect(TODO_PATH).toBe("/api/v1/todos/:id")
+  })
+})
+
+describe("todoPath", () => {
+  it("fills in the id under the todos path", () => {
+    expect(todoPath("0199a0b2-3c4d-7e8f-9a0b-1c2d3e4f5a6b")).toBe(
+      "/api/v1/todos/0199a0b2-3c4d-7e8f-9a0b-1c2d3e4f5a6b"
+    )
+  })
+
+  it("encodes the id as one path segment", () => {
+    expect(todoPath("a/b?c")).toBe("/api/v1/todos/a%2Fb%3Fc")
   })
 })
 

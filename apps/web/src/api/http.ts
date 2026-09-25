@@ -2,6 +2,7 @@ import {
   ErrorEnvelopeSchema,
   REQUEST_TIMEOUT_MS,
   TODOS_PATH,
+  todoPath,
   TodoListResponseSchema,
   TodoSchema,
   type CreateTodoRequest,
@@ -9,6 +10,7 @@ import {
   type ErrorDetail,
   type Todo,
   type TodoListResponse,
+  type UpdateTodoRequest,
 } from "@todos/shared"
 
 /**
@@ -135,4 +137,13 @@ export function listTodos(signal?: AbortSignal): Promise<TodoListResponse> {
  */
 export function createTodo(body: CreateTodoRequest): Promise<Todo> {
   return request(TODOS_PATH, { method: "POST", body, schema: TodoSchema })
+}
+
+/**
+ * `PATCH /api/v1/todos/:id`: `200` with the updated Todo. Failures reject
+ * with an `HttpError` classified as for every request (the AD-5 kinds, or
+ * `NETWORK` for a fetch rejection or timeout); an unknown id is `NOT_FOUND`.
+ */
+export function updateTodo(id: string, body: UpdateTodoRequest): Promise<Todo> {
+  return request(todoPath(id), { method: "PATCH", body, schema: TodoSchema })
 }

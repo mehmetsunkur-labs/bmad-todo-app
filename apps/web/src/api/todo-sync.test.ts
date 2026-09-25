@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import { makeTodo } from "@/test/render"
 
+import { HttpError } from "./http"
 import { createQueryClient, TODOS_QUERY_KEY } from "./query-client"
 import {
   createOp,
@@ -10,6 +11,10 @@ import {
   createTodoSync,
   DroppedError,
   getTodoSync,
+  notFoundMeansDeleted,
+  renderedList,
+  toggleOp,
+  type TodoWriteKind,
 } from "./todo-sync"
 
 describe("todo-sync seedFromList", () => {
@@ -31,6 +36,101 @@ describe("todo-sync seedFromList", () => {
     expect(sync.confirmed.get(b.id)).toEqual(b)
     expect(sync.pending.size).toBe(0)
     expect(sync.generation.size).toBe(0)
+  })
+
+  it("never nulls an id with pending ops, and still confirms listed ids that have them", () => {
+    const sync = createTodoSync()
+    const a = makeTodo({ id: "00000000-0000-7000-8000-00000000000a" })
+    const b = makeTodo({ id: "00000000-0000-7000-8000-00000000000b" })
+    sync.seedFromList([a, b])
+    sync.pending.set(a.id, [toggleOp(true)])
+    sync.pending.set(b.id, [toggleOp(true)])
+
+    // `a` is missing but pending: kept as it was. `b` is listed: re-confirmed.
+    const b2 = { ...b, description: "changed elsewhere" }
+    sync.seedFromList([b2])
+    expect(sync.confirmed.get(a.id)).toEqual(a)
+    expect(sync.confirmed.get(b.id)).toEqual(b2)
+
+    // A pending create never confirmed stays unconfirmed (not null).
+    const NEW = "00000000-0000-7000-8000-00000000000c"
+    sync.pending.set(NEW, [createOp(NEW, "new")])
+    sync.seedFromList([b2])
+    expect(sync.confirmed.has(NEW)).toBe(false)
+  })
+})
+
+describe("todo-sync renderedList", () => {
+  const a = makeTodo({
+    id: "00000000-0000-7000-8000-00000000000a",
+    description: "a",
+    createdAt: "2026-09-24T09:00:00.000Z",
+  })
+  const b = makeTodo({
+    id: "00000000-0000-7000-8000-00000000000b",
+    description: "b",
+    createdAt: "2026-09-24T10:00:00.000Z",
+  })
+
+  it("re-applies pending ops to listed Todos and keeps unlisted pending creates, sorted", () => {
+    const sync = createTodoSync()
+    const NEW = "00000000-0000-7000-8000-00000000000c"
+    sync.pending.set(a.id, [toggleOp(true)])
+    sync.pending.set(NEW, [createOp(NEW, "new", "2026-09-24T11:00:00.000Z")])
+    sync.seedFromList([a, b])
+
+    const list = renderedList(sync, [a, b])
+    expect(list.map((t) => t.id)).toEqual([NEW, b.id, a.id])
+    expect(list[2]).toEqual({ ...a, completed: true })
+    expect(list[1]).toBe(b)
+  })
+
+  it("keeps a confirmed Todo with pending ops that a later list no longer contains", () => {
+    const sync = createTodoSync()
+    sync.seedFromList([a, b])
+    sync.pending.set(a.id, [toggleOp(true)])
+    sync.seedFromList([b])
+
+    expect(renderedList(sync, [b])).toEqual([b, { ...a, completed: true }])
+  })
+
+  it("drops Todos that render as null (an unlisted pending toggle on nothing)", () => {
+    const sync = createTodoSync()
+    const GONE = "00000000-0000-7000-8000-00000000000d"
+    sync.pending.set(GONE, [toggleOp(true)])
+    sync.seedFromList([a])
+    expect(renderedList(sync, [a]).map((t) => t.id)).toEqual([a.id])
+  })
+})
+
+describe("todo-sync toggleOp and notFoundMeansDeleted", () => {
+  it("toggleOp sets an absolute completed and keeps a missing Todo missing", () => {
+    const todo = makeTodo({ completed: false })
+    expect(toggleOp(true).kind).toBe("toggle")
+    expect(toggleOp(true).apply(todo)).toEqual({ ...todo, completed: true })
+    expect(toggleOp(false).apply({ ...todo, completed: false })).toEqual(todo)
+    expect(toggleOp(true).apply(null)).toBeNull()
+  })
+
+  it("maps only NOT_FOUND to null", () => {
+    expect(
+      notFoundMeansDeleted(new HttpError("NOT_FOUND", { status: 404 }))
+    ).toBeNull()
+    expect(
+      notFoundMeansDeleted(new HttpError("INTERNAL", { status: 500 }))
+    ).toBeUndefined()
+    expect(notFoundMeansDeleted(new HttpError("NETWORK"))).toBeUndefined()
+    expect(notFoundMeansDeleted(new Error("x"))).toBeUndefined()
+  })
+
+  it("kind is the typed union, not a free string", () => {
+    const kinds: TodoWriteKind[] = ["create", "edit", "toggle", "delete"]
+    expect(kinds).toHaveLength(4)
+    createTodoMutation<{ id: string }>(
+      // @ts-expect-error: a free-string kind is rejected
+      "rename",
+      { op: () => toggleOp(true), request: vi.fn(), onFailure: vi.fn() }
+    )
   })
 })
 
@@ -249,6 +349,191 @@ describe("createTodoMutation (AD-12)", () => {
     expect(list().map((t) => t.id)).toContain(NEW_ID)
     expect(sync.confirmed.get(NEW_ID)).toMatchObject({ id: NEW_ID })
     expect(onFailure).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("createTodoMutation: toggle kind", () => {
+  const todo = makeTodo({
+    id: "00000000-0000-7000-8000-000000000001",
+    description: "todo",
+    createdAt: "2026-09-24T09:00:00.000Z",
+  })
+  const other = makeTodo({
+    id: "00000000-0000-7000-8000-000000000002",
+    description: "other",
+    createdAt: "2026-09-24T10:00:00.000Z",
+  })
+  const NEW_ID = "0199a0b2-3c4d-7e8f-9a0b-000000000099"
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    let reject!: (error: unknown) => void
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    return { promise, resolve, reject }
+  }
+
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  function setup() {
+    const queryClient = createQueryClient()
+    queryClient.setQueryDefaults(TODOS_QUERY_KEY, { structuralSharing: false })
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const sync = getTodoSync(queryClient)
+    sync.seedFromList([other, todo])
+    queryClient.setQueryData<Todo[]>(TODOS_QUERY_KEY, [other, todo])
+    const list = () => queryClient.getQueryData<Todo[]>(TODOS_QUERY_KEY)!
+    const find = (id: string) => list().find((t) => t.id === id)
+    return { queryClient, invalidate, sync, list, find }
+  }
+
+  interface ToggleVars {
+    id: string
+    completed: boolean
+  }
+
+  function toggleKind(
+    request: (vars: ToggleVars) => Promise<Todo | null>,
+    onFailure = vi.fn()
+  ) {
+    const mutation = createTodoMutation<ToggleVars>("toggle", {
+      op: (vars) => toggleOp(vars.completed),
+      request,
+      failureState: notFoundMeansDeleted,
+      onFailure,
+    })
+    return { mutation, onFailure }
+  }
+
+  it("the failure mapping sets confirmed to null on NOT_FOUND, removing the row", async () => {
+    const { queryClient, sync, list, invalidate } = setup()
+    const { mutation, onFailure } = toggleKind(() =>
+      Promise.reject(new HttpError("NOT_FOUND", { status: 404 }))
+    )
+
+    await mutation.mutate(queryClient, { id: todo.id, completed: true })
+
+    expect(sync.confirmed.get(todo.id)).toBeNull()
+    expect(list().map((t) => t.id)).toEqual([other.id])
+    expect(sync.pending.has(todo.id)).toBe(false)
+    expect(sync.generation.get(todo.id)).toBe(1)
+    expect(onFailure).toHaveBeenCalledTimes(1)
+    expect(invalidate).not.toHaveBeenCalled()
+  })
+
+  it("the failure mapping leaves confirmed unchanged for other errors", async () => {
+    const { queryClient, sync, list, find } = setup()
+    const { mutation, onFailure } = toggleKind(() =>
+      Promise.reject(new HttpError("INTERNAL", { status: 500 }))
+    )
+
+    await mutation.mutate(queryClient, { id: todo.id, completed: true })
+
+    expect(sync.confirmed.get(todo.id)).toEqual(todo)
+    expect(find(todo.id)).toEqual(todo)
+    expect(list().map((t) => t.id)).toEqual([other.id, todo.id])
+    expect(onFailure).toHaveBeenCalledTimes(1)
+  })
+
+  it("double toggle: the second PATCH waits for the first, and the row never flips back", async () => {
+    const { queryClient, sync, list, find } = setup()
+    const first = deferred<Todo>()
+    const second = deferred<Todo>()
+    const request = vi
+      .fn<(vars: ToggleVars) => Promise<Todo>>()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+    const { mutation, onFailure } = toggleKind(request)
+
+    const firstDone = mutation.mutate(queryClient, {
+      id: todo.id,
+      completed: true,
+    })
+    expect(find(todo.id)?.completed).toBe(true)
+    const secondDone = mutation.mutate(queryClient, {
+      id: todo.id,
+      completed: false,
+    })
+    expect(find(todo.id)?.completed).toBe(false)
+    await flush()
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(request.mock.calls[0]![0]).toEqual({ id: todo.id, completed: true })
+
+    first.resolve({ ...todo, completed: true })
+    await flush()
+    // The first response lands: the queued op still renders on top of it.
+    expect(sync.confirmed.get(todo.id)).toMatchObject({ completed: true })
+    expect(find(todo.id)?.completed).toBe(false)
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(request.mock.calls[1]![0]).toEqual({ id: todo.id, completed: false })
+
+    second.resolve({ ...todo, completed: false })
+    await Promise.all([firstDone, secondDone])
+    expect(find(todo.id)?.completed).toBe(false)
+    expect(list().map((t) => t.id)).toEqual([other.id, todo.id])
+    expect(sync.pending.has(todo.id)).toBe(false)
+    expect(onFailure).not.toHaveBeenCalled()
+  })
+
+  it("a toggle on a pending create is dropped when the create fails", async () => {
+    const { queryClient, sync, list } = setup()
+    const post = deferred<Todo>()
+    const createFailure = vi.fn()
+    const create = createTodoMutation<{ id: string; description: string }>(
+      "create",
+      {
+        op: (vars) =>
+          createOp(vars.id, vars.description, "2026-09-24T11:00:00.000Z"),
+        request: () => post.promise,
+        onFailure: createFailure,
+      }
+    )
+    const patch = vi.fn<(vars: ToggleVars) => Promise<Todo>>()
+    const { mutation: toggle, onFailure: toggleFailure } = toggleKind(patch)
+
+    const createDone = create.mutate(queryClient, {
+      id: NEW_ID,
+      description: "new",
+    })
+    const toggleDone = toggle.mutate(queryClient, {
+      id: NEW_ID,
+      completed: true,
+    })
+    await flush()
+    expect(list()[0]).toMatchObject({ id: NEW_ID, completed: true })
+
+    post.reject(new HttpError("INTERNAL", { status: 500 }))
+    await Promise.all([createDone, toggleDone])
+
+    expect(patch).not.toHaveBeenCalled()
+    expect(createFailure).toHaveBeenCalledTimes(1)
+    expect(toggleFailure).not.toHaveBeenCalled()
+    expect(list().map((t) => t.id)).toEqual([other.id, todo.id])
+    expect(sync.pending.has(NEW_ID)).toBe(false)
+  })
+
+  it("a toggle queued after a failed toggle is dropped: no fetch, no second failure", async () => {
+    const { queryClient, sync, find } = setup()
+    const first = deferred<Todo>()
+    const request = vi
+      .fn<(vars: ToggleVars) => Promise<Todo>>()
+      .mockImplementationOnce(() => first.promise)
+    const { mutation, onFailure } = toggleKind(request)
+
+    const a = mutation.mutate(queryClient, { id: todo.id, completed: true })
+    const b = mutation.mutate(queryClient, { id: todo.id, completed: false })
+    await flush()
+
+    first.reject(new HttpError("NETWORK"))
+    await Promise.all([a, b])
+
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(onFailure).toHaveBeenCalledTimes(1)
+    expect(find(todo.id)).toEqual(todo)
+    expect(sync.pending.has(todo.id)).toBe(false)
+    expect(sync.generation.get(todo.id)).toBe(1)
   })
 })
 

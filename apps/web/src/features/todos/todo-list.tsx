@@ -1,11 +1,13 @@
 import { useEffect, useRef } from "react"
 
 import { useRetryTodos, useTodosQuery } from "@/api/hooks/use-todos-query"
+import { useToggleTodo } from "@/api/hooks/use-toggle-todo"
 
 import { AddRow } from "./add-row"
 import { EmptyState, LoadErrorState, LoadingState } from "./list-states"
 import { RowEntranceContext } from "./row-entrance"
 import { TodoRow } from "./todo-row"
+import { showToggleFailure } from "./toggle-failure"
 
 /**
  * The Todo List, always in exactly one List State, inside the list region: a
@@ -17,11 +19,13 @@ import { TodoRow } from "./todo-row"
  *
  * The Add row sits above the region and follows the query status. Rows that
  * mount once the loaded list has been shown are new Todos and animate in;
- * rows of a (re)load don't.
+ * rows of a (re)load don't. The list owns the toggle hook and passes one
+ * stable callback to every row, so a toggle re-renders only its own row.
  */
 export function TodoList() {
   const query = useTodosQuery()
   const retry = useRetryTodos()
+  const toggle = useToggleTodo(showToggleFailure)
   const regionRef = useRef<HTMLDivElement>(null)
   const listLoaded = useRef(false)
 
@@ -41,7 +45,7 @@ export function TodoList() {
       <AddRow status={query.status} />
       <div ref={regionRef} tabIndex={-1} data-testid="todo-list-region">
         <RowEntranceContext value={listLoaded}>
-          <ListState query={query} onRetry={handleRetry} />
+          <ListState query={query} onRetry={handleRetry} onToggle={toggle} />
         </RowEntranceContext>
       </div>
     </>
@@ -51,9 +55,11 @@ export function TodoList() {
 function ListState({
   query,
   onRetry,
+  onToggle,
 }: {
   query: ReturnType<typeof useTodosQuery>
   onRetry: () => void
+  onToggle: ReturnType<typeof useToggleTodo>
 }) {
   if (query.status === "pending") return <LoadingState />
   if (query.status === "error") return <LoadErrorState onRetry={onRetry} />
@@ -62,7 +68,7 @@ function ListState({
   return (
     <ul aria-label="Todos">
       {query.data.map((todo) => (
-        <TodoRow key={todo.id} todo={todo} />
+        <TodoRow key={todo.id} todo={todo} onToggle={onToggle} />
       ))}
     </ul>
   )
