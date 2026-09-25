@@ -35,11 +35,11 @@ project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 development_status:
-  epic-1: in-progress
+  epic-1: done
   1-1-running-skeleton-the-todos-page-and-a-healthy-api-in-the-dev: done
   1-2-see-my-todo-list-in-every-list-state: done
   1-3-create-todos-through-the-api-safely-and-idempotently: done
-  1-4-add-a-todo-instantly-from-the-add-row-and-never-lose-what-i: review
+  1-4-add-a-todo-instantly-from-the-add-row-and-never-lose-what-i: done
   epic-1-retrospective: optional
 
   epic-2: backlog
