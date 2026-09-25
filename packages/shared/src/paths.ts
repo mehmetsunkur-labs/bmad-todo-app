@@ -2,3 +2,5 @@
 export const API_PREFIX = "/api/v1"
 
 export const HEALTH_PATH = `${API_PREFIX}/health`
+
+export const TODOS_PATH = `${API_PREFIX}/todos`

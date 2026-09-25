@@ -1,3 +1,5 @@
+import { TodoList } from "@/features/todos/todo-list"
+
 export function App() {
   return (
     <div className="px-gutter-mobile pt-page-top-mobile sm:px-gutter-desktop sm:pt-page-top-desktop">
@@ -5,7 +7,9 @@ export function App() {
         <header className="mb-header-gap">
           <h1 className="text-app-title">Todos</h1>
         </header>
-        <main />
+        <main>
+          <TodoList />
+        </main>
       </div>
     </div>
   )

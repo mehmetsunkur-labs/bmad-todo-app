@@ -102,6 +102,11 @@ describe("server process", () => {
     }
     expect(run.code).toBe(0)
     const msgs = run.lines.map((l) => l.msg)
+    // Migrations are applied before the server listens (AD-7).
+    const migrated = msgs.indexOf("migrations applied")
+    const listening = msgs.findIndex((m) => String(m).includes("listening"))
+    expect(migrated).toBeGreaterThanOrEqual(0)
+    expect(listening).toBeGreaterThan(migrated)
     const closed = msgs.indexOf("http server closed")
     const poolClosed = msgs.indexOf("database pool closed")
     expect(closed).toBeGreaterThanOrEqual(0)
