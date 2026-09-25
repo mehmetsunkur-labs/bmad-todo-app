@@ -2,7 +2,7 @@
 
 A one-time check that a developer who did not build the app can get it running and explain its data flow within 15 minutes, using only `README.md` and the docs it links to.
 
-- **Status:** **partial.** This is not yet the full SM-5 check; see [Limits of this run](#limits-of-this-run) and [Follow-up](#follow-up).
+- **Status:** **passed (human run, 2026-09-26).** A colleague who did not build the app did the walkthrough, and Msunkur observed it and reported it all good. The agent run below (2026-09-25) is kept as the earlier, partial record.
 - **Date:** 2026-09-25
 - **Who:** a context-free AI agent playing "a developer who did not build the app". It had no prior knowledge of the project and read only the README and `docs/api/openapi.json`. It was not a human developer.
 - **Where:** a fresh copy of the repository (tracked files only, no `.env`, no `node_modules`) on the owner's host, as the isolated Compose project `todos-walkthrough` with `WEB_PORT=18180` and `DB_PORT=15532`, so the owner's `todos` stack was never touched. Torn down afterwards with `down -v`, for that project only.
@@ -17,9 +17,11 @@ A one-time check that a developer who did not build the app can get it running a
   - _Stop the production-like stack before `docker compose up -d db`._ The README says to stop it first (otherwise only `db` swaps into dev mode). The run went straight from the production-like stack to `up -d db`, and the record does not say whether it was stopped.
   - _Create `todos_test` once when the production-like stack created the volume._ In this run the production-like stack created the `todos-walkthrough` volume first, so the README's `createdb` step applies, but the record does not show it being run before `pnpm test`.
 
-## Follow-up
+## Human walkthrough (2026-09-26)
 
-A **human** walkthrough is still needed to close SM-5: a developer who did not build the app, on a machine without cached images, following only the README through **both** the dev stack and the production-like stack, including the stop and `createdb` steps, and timing it end to end. Owner: **Msunkur**.
+- **Who:** a colleague who did not build the app, observed by Msunkur, using the [Todos onboarding walkthrough](https://claude.ai/artifact/HKt9KTr6aRnK3frk9uST14) checklist: dev stack, production-like stack, data surviving a restart, the API docs, and the data-flow questions.
+- **Result:** passed. Msunkur reported the session as all good, with no README gaps.
+- **Not recorded:** per-step times, the total time against the 15-minute target, whether the first image build was uncached, and the answers given. The observer sheet wasn't shared back, so SM-5's time is recorded as met on the observer's word, not as a measured number.
 
 ## What was run, following the README
 
