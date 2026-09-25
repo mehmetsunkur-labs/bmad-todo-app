@@ -188,6 +188,77 @@ export function handleFrameworkError(
   void sendError(reply, new AppError("VALIDATION_ERROR", { cause: error }))
 }
 
+// Metadata that is safe to log from driver and socket errors. Everything else
+// (Drizzle's `params`/`query`, pg's `detail`/`where`, …) is dropped, since it
+// can carry bound values such as Description text (AD-11).
+const LOGGABLE_ERROR_KEYS = [
+  "code",
+  "errno",
+  "syscall",
+  "address",
+  "port",
+  "severity",
+  "routine",
+  "table",
+  "column",
+  "constraint",
+] as const
+
+// Drizzle's `DrizzleQueryError` message is `Failed query: …\nparams: …`.
+const PARAMS_SUFFIX = /\nparams: [\s\S]*$/
+// The same suffix inside a stack: the `params:` line(s) up to the first frame.
+const STACK_PARAMS = /\nparams: [\s\S]*?(?=\n\s+at |$)/
+
+const MAX_CAUSE_DEPTH = 10
+
+/**
+ * A copy of `error` that is safe to log: name, message and stack without bound
+ * query params, allowlisted metadata, and the same treatment for every `cause`
+ * (and AggregateError member). The original error is never modified, so
+ * classification (`toAppError`) still sees it whole.
+ */
+export function toLoggableError(error: unknown, depth = 0): unknown {
+  if (!(error instanceof Error)) {
+    // Non-Error throws carry no stack and no params; log only their type.
+    return typeof error === "object" && error !== null
+      ? { type: "non-error object" }
+      : error
+  }
+  const message = error.message.replace(PARAMS_SUFFIX, "")
+  const cause =
+    error.cause !== undefined && depth < MAX_CAUSE_DEPTH
+      ? toLoggableError(error.cause, depth + 1)
+      : undefined
+  const copy =
+    error instanceof AggregateError
+      ? new AggregateError(
+          depth < MAX_CAUSE_DEPTH
+            ? error.errors.map((e) => toLoggableError(e, depth + 1))
+            : [],
+          message,
+          cause === undefined ? undefined : { cause }
+        )
+      : new Error(message, cause === undefined ? undefined : { cause })
+  copy.name = error.name
+  if (typeof error.stack === "string") {
+    copy.stack = error.stack
+      // A function replacer, so `$…` in the query text is taken literally.
+      .replace(error.message, () => message)
+      .replace(STACK_PARAMS, "")
+  } else {
+    delete copy.stack
+  }
+  const source = error as unknown as Record<string, unknown>
+  const target = copy as unknown as Record<string, unknown>
+  for (const key of LOGGABLE_ERROR_KEYS) {
+    const value = source[key]
+    if (typeof value === "string" || typeof value === "number") {
+      target[key] = value
+    }
+  }
+  return copy
+}
+
 /**
  * Registers the single error handler and the single not-found handler. Every
  * non-2xx response the API sends comes from one of these two (AD-5).
@@ -198,13 +269,16 @@ export function registerErrorHandlers(app: FastifyInstance): void {
     if (appError) {
       if (appError.statusCode >= 500) {
         request.log.warn(
-          { err: appError.cause ?? appError, code: appError.code },
+          {
+            err: toLoggableError(appError.cause ?? appError),
+            code: appError.code,
+          },
           "request failed"
         )
       }
       return sendError(reply, appError)
     }
-    request.log.error({ err: error }, "unhandled error")
+    request.log.error({ err: toLoggableError(error) }, "unhandled error")
     return sendError(reply, new AppError("INTERNAL"))
   })
 

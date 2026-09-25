@@ -32,3 +32,22 @@ export function compareTodos(
   if (a.id !== b.id) return a.id < b.id ? 1 : -1
   return 0
 }
+
+/**
+ * `POST /api/v1/todos` body (AD-2, AD-4). Strict: unknown keys, including any
+ * client-supplied timestamps, are rejected. Only the shape is checked here;
+ * the service validates the normalized Description's length.
+ */
+export const CreateTodoRequestSchema = z.strictObject({
+  id: z.uuid(),
+  description: z.string(),
+})
+export type CreateTodoRequest = z.infer<typeof CreateTodoRequestSchema>
+
+/**
+ * The single Description normalization (AD-3): each `\r\n`, `\r`, or `\n`
+ * becomes one space, then the result is trimmed.
+ */
+export function normalizeDescription(raw: string): string {
+  return raw.replace(/\r\n|\r|\n/g, " ").trim()
+}

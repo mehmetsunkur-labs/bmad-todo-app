@@ -41,6 +41,9 @@ export function buildApp({ pool, logger }: BuildAppOptions): FastifyInstance {
 
   app.setValidatorCompiler(validatorCompiler)
   app.setSerializerCompiler(serializerCompiler)
+  // The API accepts JSON only: without Fastify's built-in text/plain parser, a
+  // text/plain body gets 415 VALIDATION_ERROR like any other unsupported type.
+  app.removeContentTypeParser("text/plain")
 
   registerErrorHandlers(app)
   registerRequestContext(app)

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest"
 
-import { compareTodos, TodoListResponseSchema, TodoSchema } from "../src"
+import {
+  compareTodos,
+  CreateTodoRequestSchema,
+  normalizeDescription,
+  TodoListResponseSchema,
+  TodoSchema,
+} from "../src"
 
 const todo = (id: string, createdAt: string) => ({ id, createdAt })
 
@@ -63,5 +69,71 @@ describe("TodoSchema", () => {
     expect(
       TodoSchema.safeParse({ ...valid, createdAt: "not a date" }).success
     ).toBe(false)
+  })
+})
+
+describe("normalizeDescription", () => {
+  it.each([
+    ["Buy milk", "Buy milk"],
+    ["  Buy\r\nmilk\n ", "Buy milk"],
+    ["a\rb", "a b"],
+    ["a\nb", "a b"],
+    ["a\r\nb", "a b"],
+    ["a\n\r\nb", "a  b"],
+    ["a\r\rb", "a  b"],
+    ["\r\n\n", ""],
+    ["   ", ""],
+    ["", ""],
+    ["\tx\t", "x"],
+  ])("normalizes %j to %j", (raw, expected) => {
+    expect(normalizeDescription(raw)).toBe(expected)
+  })
+})
+
+describe("CreateTodoRequestSchema", () => {
+  const valid = {
+    id: "0199a0b2-3c4d-7e8f-9a0b-1c2d3e4f5a6b",
+    description: "Buy milk",
+  }
+
+  it("accepts an id and a description, in any UUID case", () => {
+    expect(CreateTodoRequestSchema.parse(valid)).toEqual(valid)
+    const upper = { ...valid, id: valid.id.toUpperCase() }
+    expect(CreateTodoRequestSchema.parse(upper)).toEqual(upper)
+  })
+
+  it("checks only the shape: an empty or over-long description passes", () => {
+    expect(
+      CreateTodoRequestSchema.safeParse({ ...valid, description: "" }).success
+    ).toBe(true)
+    expect(
+      CreateTodoRequestSchema.safeParse({
+        ...valid,
+        description: "x".repeat(600),
+      }).success
+    ).toBe(true)
+  })
+
+  it("rejects unknown keys, including client timestamps", () => {
+    const result = CreateTodoRequestSchema.safeParse({
+      ...valid,
+      createdAt: "2026-09-24T09:14:00.000Z",
+    })
+    expect(result.success).toBe(false)
+    expect(result.error?.issues[0]).toMatchObject({
+      code: "unrecognized_keys",
+      keys: ["createdAt"],
+    })
+  })
+
+  it.each([
+    ["a non-UUID id", { ...valid, id: "abc" }],
+    ["a numeric id", { ...valid, id: 123 }],
+    ["a missing id", { description: "x" }],
+    ["a missing description", { id: valid.id }],
+    ["a null description", { ...valid, description: null }],
+    ["a numeric description", { ...valid, description: 1 }],
+  ])("rejects %s", (_name, body) => {
+    expect(CreateTodoRequestSchema.safeParse(body).success).toBe(false)
   })
 })
