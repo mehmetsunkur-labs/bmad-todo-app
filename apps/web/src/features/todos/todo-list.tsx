@@ -1,21 +1,35 @@
-import { useRef } from "react"
+import { useEffect, useRef } from "react"
 
 import { useRetryTodos, useTodosQuery } from "@/api/hooks/use-todos-query"
 
+import { AddRow } from "./add-row"
 import { EmptyState, LoadErrorState, LoadingState } from "./list-states"
+import { RowEntranceContext } from "./row-entrance"
 import { TodoRow } from "./todo-row"
 
 /**
  * The Todo List, always in exactly one List State, inside the list region: a
  * `tabIndex={-1}` container that stays mounted across states. "Try again"
- * unmounts its own button, so it first moves focus to the region; focus then
- * stays there while the state resolves (skeleton, Empty, rows, or the error
- * again) and is never lost to `<body>`. The region adds no tab stop.
+ * unmounts its own button, so it first moves focus to the region; focus
+ * stays there while loading and is never lost to `<body>`. On hover-capable
+ * fine pointers, the Add row input takes focus once the list is loaded
+ * (Empty or Populated). The region adds no tab stop.
+ *
+ * The Add row sits above the region and follows the query status. Rows that
+ * mount once the loaded list has been shown are new Todos and animate in;
+ * rows of a (re)load don't.
  */
 export function TodoList() {
   const query = useTodosQuery()
   const retry = useRetryTodos()
   const regionRef = useRef<HTMLDivElement>(null)
+  const listLoaded = useRef(false)
+
+  // Passive effects run after the rows' layout effects, so the rows of the
+  // commit that first shows the loaded list still see `false`.
+  useEffect(() => {
+    listLoaded.current = query.status === "success"
+  }, [query.status])
 
   function handleRetry() {
     regionRef.current?.focus()
@@ -23,9 +37,14 @@ export function TodoList() {
   }
 
   return (
-    <div ref={regionRef} tabIndex={-1} data-testid="todo-list-region">
-      <ListState query={query} onRetry={handleRetry} />
-    </div>
+    <>
+      <AddRow status={query.status} />
+      <div ref={regionRef} tabIndex={-1} data-testid="todo-list-region">
+        <RowEntranceContext value={listLoaded}>
+          <ListState query={query} onRetry={handleRetry} />
+        </RowEntranceContext>
+      </div>
+    </>
   )
 }
 

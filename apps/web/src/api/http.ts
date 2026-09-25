@@ -3,8 +3,11 @@ import {
   REQUEST_TIMEOUT_MS,
   TODOS_PATH,
   TodoListResponseSchema,
+  TodoSchema,
+  type CreateTodoRequest,
   type ErrorCode,
   type ErrorDetail,
+  type Todo,
   type TodoListResponse,
 } from "@todos/shared"
 
@@ -124,4 +127,12 @@ export async function request<T>(
 /** `GET /api/v1/todos`. */
 export function listTodos(signal?: AbortSignal): Promise<TodoListResponse> {
   return request(TODOS_PATH, { schema: TodoListResponseSchema, signal })
+}
+
+/**
+ * `POST /api/v1/todos`. Both `201` (created) and `200` (idempotent replay of
+ * the same `id` and Description) resolve to the stored Todo.
+ */
+export function createTodo(body: CreateTodoRequest): Promise<Todo> {
+  return request(TODOS_PATH, { method: "POST", body, schema: TodoSchema })
 }
