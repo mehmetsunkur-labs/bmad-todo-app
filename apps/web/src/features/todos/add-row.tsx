@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from "react"
 import { v7 as uuidv7 } from "uuid"
 import { DESCRIPTION_MAX, normalizeDescription } from "@todos/shared"
 
-import { useCreateTodo } from "@/api/hooks/use-create-todo"
+import { type CreateTodoVars, useCreateTodo } from "@/api/hooks/use-create-todo"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { announce } from "@/lib/announce"
@@ -11,6 +11,14 @@ import { HOVER_POINTER_QUERY, matchesMedia } from "@/lib/use-media-query"
 import { CharacterCounter } from "./character-counter"
 import { counterAnnouncement } from "./counter-announcement"
 import { registerAddRowController, showCreateFailure } from "./create-failure"
+import { withDroppedDelete } from "./delete-failure"
+
+// Stable for the hook: a delete dropped behind a failed create counts as
+// done (the row stays gone, the text stays out of the box), and is still
+// sent, since the POST may have committed.
+const onCreateFailure = withDroppedDelete<CreateTodoVars>(showCreateFailure, {
+  resend: true,
+})
 
 /**
  * The Add row: a `<form>` with the "New todo" input and the primary "Add"
@@ -40,7 +48,7 @@ export function AddRow({
   // the next submit, replaced by a newer restore.
   const restoredRef = useRef<{ id: string; description: string } | null>(null)
   const disabled = status !== "success"
-  const createTodo = useCreateTodo(showCreateFailure)
+  const createTodo = useCreateTodo(onCreateFailure)
 
   useEffect(
     () =>

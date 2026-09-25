@@ -738,6 +738,10 @@ describe("createTodoMutation: delete kind", () => {
 
     expect(deleteRequest).not.toHaveBeenCalled()
     expect(createFailure).toHaveBeenCalledTimes(1)
+    expect(createFailure.mock.calls[0]![0]).toMatchObject({
+      dropped: ["delete"],
+      state: null,
+    })
     expect(deleteFailure).not.toHaveBeenCalled()
     expect(ids()).toEqual([other.id, todo.id])
     expect(sync.pending.has(NEW_ID)).toBe(false)
@@ -895,6 +899,41 @@ describe("createTodoMutation: edit kind", () => {
     expect(sync.confirmed.get(todo.id)).toBeNull()
     expect(ids()).toEqual([other.id])
     expect(onFailure).toHaveBeenCalledTimes(1)
+    expect(onFailure.mock.calls[0]![0]).toMatchObject({
+      dropped: [],
+      state: null,
+    })
+  })
+
+  it("a 404 with a delete queued: the failure reports the dropped delete and no Todo", async () => {
+    const { queryClient, sync, ids } = setup()
+    const patch = deferred<Todo>()
+    const deleteRequest = vi.fn(async () => null)
+    const { mutation: edit, onFailure: editFailure } = editKind(
+      () => patch.promise
+    )
+    const { mutation: remove, onFailure: deleteFailure } =
+      deleteKind(deleteRequest)
+
+    const editDone = edit.mutate(queryClient, {
+      id: todo.id,
+      description: "new",
+    })
+    const deleteDone = remove.mutate(queryClient, { id: todo.id })
+    await flush()
+
+    patch.reject(new HttpError("NOT_FOUND", { status: 404 }))
+    await Promise.all([editDone, deleteDone])
+
+    expect(deleteRequest).not.toHaveBeenCalled()
+    expect(editFailure).toHaveBeenCalledTimes(1)
+    expect(editFailure.mock.calls[0]![0]).toMatchObject({
+      dropped: ["delete"],
+      state: null,
+    })
+    expect(deleteFailure).not.toHaveBeenCalled()
+    expect(ids()).toEqual([other.id])
+    expect(sync.pending.has(todo.id)).toBe(false)
   })
 
   it("delete during a pending edit: the DELETE waits for the PATCH, the row is removed at once", async () => {
@@ -954,6 +993,11 @@ describe("createTodoMutation: edit kind", () => {
 
     expect(deleteRequest).not.toHaveBeenCalled()
     expect(editFailure).toHaveBeenCalledTimes(1)
+    // The dropped kinds exclude the failed op; the state is the rollback's.
+    expect(editFailure.mock.calls[0]![0]).toMatchObject({
+      dropped: ["delete"],
+      state: todo,
+    })
     expect(deleteFailure).not.toHaveBeenCalled()
     expect(ids()).toEqual([other.id, todo.id])
     expect(list()[1]).toEqual(todo)

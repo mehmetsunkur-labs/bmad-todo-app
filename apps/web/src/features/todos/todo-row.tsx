@@ -52,7 +52,9 @@ import { animateRowExit } from "./row-exit"
  * Todo looks exactly like a confirmed one. An `exiting` row (deleted, kept
  * only for its exit motion) is `inert`, never editing, fades then collapses,
  * and reports `onExitDone(id)`; if it stops exiting (a rollback), the motion
- * is undone.
+ * is undone. A non-exiting row that unmounts while focus is inside it
+ * reports `onFocusedRemoval(id, li)` (its layout cleanup runs while it is
+ * still in the DOM), so the list can move focus once the `li` is gone.
  */
 export const TodoRow = memo(function TodoRow({
   todo,
@@ -67,6 +69,7 @@ export const TodoRow = memo(function TodoRow({
   editAutoFocus = true,
   exiting = false,
   onExitDone,
+  onFocusedRemoval,
 }: {
   todo: Todo
   onToggle: (vars: ToggleTodoVars) => void
@@ -84,6 +87,11 @@ export const TodoRow = memo(function TodoRow({
   editAutoFocus?: boolean
   exiting?: boolean
   onExitDone: (id: string) => void
+  /**
+   * This row's effects were torn down, not exiting, with focus inside it
+   * (an unmount, or StrictMode's simulated one: the `li` then stays).
+   */
+  onFocusedRemoval?: (id: string, row: HTMLElement) => void
 }) {
   const rowRef = useRef<HTMLLIElement>(null)
   const editButtonRef = useRef<HTMLButtonElement>(null)
@@ -100,6 +108,21 @@ export const TodoRow = memo(function TodoRow({
     if (!exiting || !rowRef.current) return
     return animateRowExit(rowRef.current, () => onExitDone(id))
   }, [exiting, id, onExitDone])
+
+  // The latest props, for the unmount cleanup below.
+  const removal = useRef({ exiting, onFocusedRemoval })
+  useLayoutEffect(() => {
+    removal.current = { exiting, onFocusedRemoval }
+  })
+  useLayoutEffect(() => {
+    const row = rowRef.current
+    return () => {
+      const { exiting: wasExiting, onFocusedRemoval: report } = removal.current
+      if (!wasExiting && row?.contains(document.activeElement)) {
+        report?.(id, row)
+      }
+    }
+  }, [id])
 
   function handleCheckedChange(checked: boolean | "indeterminate") {
     const completed = checked === true

@@ -5,6 +5,8 @@ import { HttpError } from "@/api/http"
 import { announce } from "@/lib/announce"
 import { showErrorToast } from "@/lib/toast"
 
+import { focusIsFree } from "./free-focus"
+
 export const CREATE_RESTORED_COPY =
   "Couldn't add that todo. Your text is back in the box."
 export const TOO_LONG_COPY =
@@ -67,7 +69,8 @@ export function isTooLong(error: unknown): boolean {
  *
  * - Input empty: the sent (normalized) Description goes back into the input
  *   (with its `id`, reused if that text is resubmitted unchanged), focus
- *   moves there only from `<body>` or the Add row, and a plain toast says so.
+ *   moves there only from free focus (`focusIsFree`) or the Add row, and a
+ *   plain toast says so.
  * - Input has text: it is left alone, and a persistent toast quotes the
  *   failed Description with "Retry" (same `id` and Description).
  * - `too_long`: the too-long copy replaces either message.
@@ -77,8 +80,7 @@ export function showCreateFailure({ vars, error, retry }: CreateTodoFailure) {
   const addRow = controller
 
   if (addRow && normalizeDescription(addRow.getValue()) === "") {
-    const active = document.activeElement
-    const focusWasFree = !active || active === document.body
+    const focusWasFree = focusIsFree()
     const focusInAddRow = addRow.containsFocus()
     addRow.restore(vars.description, vars.id)
     if (focusWasFree || focusInAddRow) addRow.focus()

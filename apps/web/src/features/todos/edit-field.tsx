@@ -24,6 +24,8 @@ const LINE_BREAK = /\r\n|\r|\n/g
  *   (`onSave(value, "blur")`), Escape cancels (`onCancel()`) and
  *   `preventDefault`s so the Toaster doesn't also dismiss a toast.
  * - Switching away from the window blurs without saving.
+ * - It shows the design-system focus ring (2 px `ring`, 2 px offset), which
+ *   the base Textarea's `outline-none` would otherwise hide.
  * - Closing sets a flag first: the blur some browsers fire when the focused
  *   field is removed never saves a second time, or after Escape.
  */
@@ -118,7 +120,7 @@ export function EditField({
           if (!document.hasFocus()) return
           close(() => onSave(value, "blur"))
         }}
-        className="min-h-0 resize-none overflow-hidden rounded-none border-0 border-b bg-transparent px-0 py-0 text-(length:--text-todo-description) leading-(--text-todo-description--line-height) wrap-anywhere focus-visible:ring-0 md:text-(length:--text-todo-description) dark:bg-transparent"
+        className="min-h-0 resize-none overflow-hidden rounded-none border-0 border-b bg-transparent px-0 py-0 text-(length:--text-todo-description) leading-(--text-todo-description--line-height) wrap-anywhere focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus-visible:outline-solid md:text-(length:--text-todo-description) dark:bg-transparent"
       />
       <CharacterCounter length={value.length} />
     </div>

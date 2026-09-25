@@ -9,6 +9,7 @@ import {
   RETRY_LABEL,
   TOO_LONG_COPY,
 } from "./create-failure"
+import { focusIsFree } from "./free-focus"
 
 export const EDIT_FAILED_COPY = "Couldn't save your edit. Please try again."
 
@@ -49,8 +50,8 @@ export function registerEditController(next: EditController): () => void {
  * never shown.
  *
  * - No edit open (and not a `404`): the row reopens its edit field with the
- *   sent text, focused only if focus was on `<body>` or inside that row, and
- *   a plain toast says so.
+ *   sent text, focused only if focus was free (see `focusIsFree`) or inside
+ *   that row, and a plain toast says so.
  * - Another edit open (or this row's own edit reopened), or a `404`: the
  *   text being typed is never touched; a persistent toast quotes the sent
  *   text with "Retry", which resends the same PATCH and announces
@@ -63,9 +64,7 @@ export function showEditFailure({ vars, error, retry }: EditTodoFailure) {
   const list = controller
 
   if (list && !notFound && list.openEditId() === null) {
-    const active = document.activeElement
-    const focusWasFree = !active || active === document.body
-    const focus = focusWasFree || list.containsFocus(vars.id)
+    const focus = focusIsFree() || list.containsFocus(vars.id)
     list.reopen(vars.id, vars.description, focus)
     showErrorToast(tooLong ? TOO_LONG_COPY : EDIT_FAILED_COPY)
     return
