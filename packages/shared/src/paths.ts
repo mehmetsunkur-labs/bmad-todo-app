@@ -7,3 +7,8 @@ export const TODOS_PATH = `${API_PREFIX}/todos`
 
 /** A single Todo: the `PATCH` and `DELETE` route path (`:id` is a UUID). */
 export const TODO_PATH = `${TODOS_PATH}/:id`
+
+/** The concrete path of one Todo (`TODO_PATH` with its `id` filled in). */
+export function todoPath(id: string): string {
+  return `${TODOS_PATH}/${encodeURIComponent(id)}`
+}

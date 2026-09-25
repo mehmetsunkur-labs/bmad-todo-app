@@ -5,15 +5,19 @@ import {
 } from "@tanstack/react-query"
 import { compareTodos, type Todo } from "@todos/shared"
 
+import { HttpError } from "./http"
 import { TODOS_QUERY_KEY } from "./query-client"
+
+/** Every kind of write to one Todo (AD-12). */
+export type TodoWriteKind = "create" | "edit" | "toggle" | "delete"
 
 /**
  * An optimistic operation not yet confirmed by the server. `apply` derives
  * the rendered Todo from the state before it (`null` = no Todo). Story 1.4
- * defines the create op; Epic 2 adds edit, toggle, and delete.
+ * defines the create op, Story 2.2 the toggle op; edit and delete follow.
  */
 export interface PendingOp {
-  readonly kind: string
+  readonly kind: TodoWriteKind
   apply(previous: Todo | null): Todo | null
 }
 
@@ -31,7 +35,8 @@ export interface TodoSync {
   /**
    * Seeds `confirmed` from a successful list fetch: every listed Todo is
    * confirmed as returned, and a previously confirmed id missing from the
-   * list is confirmed as `null`.
+   * list is confirmed as `null`, unless it has pending ops (their writes
+   * settle it instead).
    */
   seedFromList(todos: readonly Todo[]): void
 }
@@ -51,7 +56,7 @@ export function createTodoSync(): TodoSync {
         listed.add(todo.id)
       }
       for (const id of confirmed.keys()) {
-        if (!listed.has(id)) confirmed.set(id, null)
+        if (!listed.has(id) && !pending.has(id)) confirmed.set(id, null)
       }
     },
   }
@@ -95,11 +100,39 @@ export function createOp(
   }
 }
 
+/**
+ * The optimistic toggle: the previous state with an absolute `completed`
+ * (never a flip), so queued toggles render in order. No Todo stays no Todo.
+ */
+export function toggleOp(completed: boolean): PendingOp {
+  return {
+    kind: "toggle",
+    apply: (previous) => previous && { ...previous, completed },
+  }
+}
+
 /** A Todo's rendered state: `confirmed` with its `pending` ops applied in order. */
 export function renderedTodo(sync: TodoSync, id: string): Todo | null {
   let state = sync.confirmed.get(id) ?? null
   for (const op of sync.pending.get(id) ?? []) state = op.apply(state)
   return state
+}
+
+/**
+ * The rendered list after a successful fetch (seeded first): each listed
+ * Todo with its pending ops re-applied (dropping any that render as `null`),
+ * plus every pending id not listed that renders as a Todo (a pending create),
+ * sorted by `compareTodos`.
+ */
+export function renderedList(sync: TodoSync, listed: readonly Todo[]): Todo[] {
+  const ids = new Set(listed.map((todo) => todo.id))
+  for (const id of sync.pending.keys()) ids.add(id)
+  const todos: Todo[] = []
+  for (const id of ids) {
+    const todo = renderedTodo(sync, id)
+    if (todo) todos.push(todo)
+  }
+  return todos.sort(compareTodos)
 }
 
 /**
@@ -142,12 +175,29 @@ export interface TodoMutationConfig<TVars extends { id: string }> {
   op(vars: TVars): PendingOp
   /** The HTTP call; resolves to the confirmed Todo, or `null` once deleted. */
   request(vars: TVars): Promise<Todo | null>
+  /**
+   * The kind's failure mapping: what a real failure says about the server's
+   * state. A Todo (or `null` = not on the server) replaces `confirmed(id)`
+   * before the rollback; `undefined` keeps it (the default).
+   */
+  failureState?(error: unknown, vars: TVars): Todo | null | undefined
   /** Called exactly once per real failure, after the rollback. */
   onFailure(failure: TodoMutationFailure<TVars>): void
 }
 
+/**
+ * The failure mapping for PATCH: a `404 NOT_FOUND` means the Todo is gone
+ * from the server (`null`, so the row is removed); anything else leaves
+ * `confirmed` as it was.
+ */
+export function notFoundMeansDeleted(error: unknown): null | undefined {
+  return error instanceof HttpError && error.kind === "NOT_FOUND"
+    ? null
+    : undefined
+}
+
 export interface TodoMutation<TVars extends { id: string }> {
-  readonly kind: string
+  readonly kind: TodoWriteKind
   /** The TanStack Query options for one write, scoped to `vars.id`. */
   options(
     queryClient: QueryClient,
@@ -165,13 +215,14 @@ export interface TodoMutation<TVars extends { id: string }> {
  * - `mutationFn`: if the generation changed, throw `DroppedError` (no fetch).
  * - `onSuccess`: set `confirmed(id)`, remove the op, re-render.
  * - `onError` with `DroppedError`: remove the op, nothing else.
- * - `onError` otherwise: bump the generation, clear `pending(id)`, re-render
- *   from `confirmed(id)`, and call `onFailure` exactly once.
+ * - `onError` otherwise: bump the generation, apply the kind's
+ *   `failureState` mapping to `confirmed(id)`, clear `pending(id)`,
+ *   re-render from `confirmed(id)`, and call `onFailure` exactly once.
  *
  * Never calls `invalidateQueries`, and keeps the pinned mutation defaults.
  */
 export function createTodoMutation<TVars extends { id: string }>(
-  kind: string,
+  kind: TodoWriteKind,
   config: TodoMutationConfig<TVars>
 ): TodoMutation<TVars> {
   const mutation: TodoMutation<TVars> = {
@@ -217,6 +268,8 @@ export function createTodoMutation<TVars extends { id: string }>(
             return
           }
           sync.generation.set(id, (sync.generation.get(id) ?? 0) + 1)
+          const known = config.failureState?.(error, vars)
+          if (known !== undefined) sync.confirmed.set(id, known)
           sync.pending.delete(id)
           renderTodo(queryClient, id)
           config.onFailure({
