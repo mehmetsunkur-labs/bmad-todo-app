@@ -29,7 +29,8 @@ export default defineConfig([
     "e2e/playwright-report",
   ]),
   {
-    files: ["**/*.{ts,tsx,js}"],
+    // .mjs: the Node harness scripts (scripts/, e2e/scripts/).
+    files: ["**/*.{ts,tsx,js,mjs}"],
     extends: [js.configs.recommended, tseslint.configs.recommended],
     languageOptions: {
       globals: globals.node,

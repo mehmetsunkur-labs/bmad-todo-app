@@ -1,0 +1,10 @@
+# Harness-only overlay for the dev-stack boot check in scripts/stack-smoke.test.mjs.
+# Loaded after compose.yaml and compose.override.yaml, in the isolated
+# `todos-smoke-dev` project. It drops the dev overlay's fixed host ports (the
+# inspector on 9229 and the db on DB_PORT), which the owner's own dev stack may
+# hold, so the check can run beside it. Only web publishes a (free) port.
+services:
+  api:
+    ports: !reset []
+  db:
+    ports: !reset []

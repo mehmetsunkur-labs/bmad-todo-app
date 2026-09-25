@@ -9,18 +9,19 @@
   "scripts": {
     "dev": "docker compose up",
     "build": "pnpm -r build",
-    "test": "pnpm -r test",
+    "test": "pnpm -r test && node --test scripts/env-preflight.test.mjs scripts/smoke-port.test.mjs",
     "test:e2e": "pnpm --filter @todos/e2e test:e2e",
-    "test:stack": "node --test scripts/stack-smoke.test.mjs",
+    "test:stack": "node --test scripts/*.test.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm -r typecheck && tsc -p scripts",
     "db:generate": "pnpm --filter @todos/api db:generate",
     "db:migrate": "pnpm --filter @todos/api db:migrate",
     "api:docs": "pnpm --filter @todos/api api:docs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/node": "^24.13.6",
     "eslint": "^10.11.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.7",

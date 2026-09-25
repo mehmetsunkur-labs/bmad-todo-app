@@ -3,7 +3,10 @@
   "compilerOptions": {
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["node"],
-    "noEmit": true
+    "noEmit": true,
+    // Typechecks the run-e2e.mjs orchestrator through its JSDoc.
+    "allowJs": true,
+    "checkJs": true
   },
-  "include": ["playwright.config.ts", "tests/**/*.ts"]
+  "include": ["playwright.config.ts", "tests/**/*.ts", "scripts/**/*.mjs"]
 }

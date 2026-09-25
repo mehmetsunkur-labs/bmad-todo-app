@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-24-2026 16:33
-last_updated: 09-25-2026 22:04
+last_updated: 09-26-2026 00:03
 project: Todo-App
 project_key: NOKEY
 tracking_system: file-system
@@ -179,28 +179,28 @@ action_items:
     action: "Fix dev-stack dependency refresh: anonymous node_modules mounts or documented
       named-volume reset, plus a dev-stack boot check in test:stack (F1)"
     owner: "Dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
   - id: "epic-3-retro-item-18-give-test-stack-and-test-e2e-their-own-i"
     epic: 3
     action: "Give test:stack and test:e2e their own image tags so tests never rebuild
       the owner todos-*:prod images (F2)"
     owner: "Dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
   - id: "epic-3-retro-item-19-harden-harnesses-smoke_web_port-env-pref"
     epic: 3
     action: "Harden harnesses: SMOKE_WEB_PORT, .env preflight, lint and typecheck
       scripts/*.mjs and e2e/scripts/*.mjs (F3, F4)"
     owner: "Dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
   - id: "epic-3-retro-item-20-qualify-openapi-readme-for-gateway-non-j"
     epic: 3
     action: "Qualify OpenAPI/README for gateway non-JSON 502/504/413 and align nginx
       client_max_body_size with the 16 KiB API limit (F7)"
     owner: "Dev + Architect"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md"
   - id: "epic-3-retro-item-21-reconcile-design-md-mockup-row-geometry"
     epic: 3

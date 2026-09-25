@@ -8,7 +8,7 @@ services:
       - ./docker/db-init:/docker-entrypoint-initdb.d:ro
 
   api:
-    image: todos-api:dev
+    image: todos-api:${TODOS_IMAGE_TAG:-dev}
     build:
       target: dev
     command:
@@ -22,12 +22,14 @@ services:
       - "127.0.0.1:9229:9229"
     volumes:
       - .:/app
-      - api-root-node-modules:/app/node_modules
-      - api-node-modules:/app/apps/api/node_modules
-      - api-shared-node-modules:/app/packages/shared/node_modules
+      # Anonymous volumes: they keep the image's node_modules over the bind
+      # mount, and `docker compose up --build -V` renews them from the new image.
+      - /app/node_modules
+      - /app/apps/api/node_modules
+      - /app/packages/shared/node_modules
 
   web:
-    image: todos-web:dev
+    image: todos-web:${TODOS_IMAGE_TAG:-dev}
     build:
       target: dev
     command:
@@ -43,14 +45,8 @@ services:
       API_PROXY_TARGET: http://api:3000
     volumes:
       - .:/app
-      - web-root-node-modules:/app/node_modules
-      - web-node-modules:/app/apps/web/node_modules
-      - web-shared-node-modules:/app/packages/shared/node_modules
-
-volumes:
-  api-root-node-modules:
-  api-node-modules:
-  api-shared-node-modules:
-  web-root-node-modules:
-  web-node-modules:
-  web-shared-node-modules:
+      # Anonymous volumes: they keep the image's node_modules over the bind
+      # mount, and `docker compose up --build -V` renews them from the new image.
+      - /app/node_modules
+      - /app/apps/web/node_modules
+      - /app/packages/shared/node_modules

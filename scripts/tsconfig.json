@@ -1,0 +1,13 @@
+{
+  // Typechecks the stack smoke harness (plain .mjs, checked through its JSDoc).
+  // Run by the root `pnpm typecheck`; scripts/ belongs to no workspace package.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["*.mjs", "lib/*.mjs"]
+}

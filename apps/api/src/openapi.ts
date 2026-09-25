@@ -15,9 +15,13 @@ import { createLogger } from "./logger"
 const DESCRIPTION = [
   "The Todos API. Every route lives under `/api/v1`.",
   "Request bodies are strict: unknown keys are rejected.",
-  "Every non-2xx response is the error envelope",
+  "Every non-2xx response the API generates is the error envelope",
   "`{ error: { code, message, details? } }`; clients branch on `code`, never",
   "on `message`.",
+  "A gateway in front of the API (nginx in the production-like stack) may",
+  "answer with a non-JSON body instead: 502 or 504 when the API is",
+  "unreachable, and 413 for a body over the gateway's own limit (32 KiB).",
+  "Treat any error without the envelope as `INTERNAL`.",
 ].join(" ")
 
 /** The parts of the generated document that the drift test inspects. */
