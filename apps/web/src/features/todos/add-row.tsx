@@ -48,6 +48,9 @@ export function AddRow({
     valueRef.current = next
     setValueState(next)
   }
+  // The last restored failure (see `AddRowController.restore`); cleared by
+  // the next submit, replaced by a newer restore.
+  const restoredRef = useRef<{ id: string; description: string } | null>(null)
   const disabled = status !== "success"
   const createTodo = useCreateTodo(showCreateFailure)
 
@@ -55,9 +58,10 @@ export function AddRow({
     () =>
       registerAddRowController({
         getValue: () => valueRef.current,
-        setValue: (next) => {
-          valueRef.current = next
-          setValueState(next)
+        restore: (description, id) => {
+          restoredRef.current = { id, description }
+          valueRef.current = description
+          setValueState(description)
         },
         focus: () => inputRef.current?.focus(),
         containsFocus: () =>
@@ -84,7 +88,11 @@ export function AddRow({
     if (disabled) return
     const description = normalizeDescription(value)
     if (!description) return
-    createTodo({ id: uuidv7(), description })
+    const restored = restoredRef.current
+    restoredRef.current = null
+    const id =
+      restored && restored.description === description ? restored.id : uuidv7()
+    createTodo({ id, description })
     setValue("")
     announce("Todo added")
   }

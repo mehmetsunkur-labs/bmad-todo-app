@@ -1,5 +1,3 @@
-import type { ErrorDetail } from "@todos/shared"
-import type { LightMyRequestResponse } from "fastify"
 import pg from "pg"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { z } from "zod"
@@ -7,17 +5,19 @@ import { z } from "zod"
 import { DrizzleQueryError } from "drizzle-orm/errors"
 
 import { AppError, isDatabaseUnavailable, toLoggableError } from "../src/errors"
-import { createTestApp, TEST_DATABASE_URL, type TestApp } from "./helpers"
+import {
+  CONFLICT_BODY,
+  createTestApp,
+  expectValidationError,
+  TEST_DATABASE_URL,
+  type TestApp,
+} from "./helpers"
 
 const EchoBodySchema = z.strictObject({
   description: z.string().min(1).max(500),
 })
 
-// Exact envelope bodies: asserted on the raw `res.json()` with `toEqual`, so a
-// leaked key fails the test (the shared response schemas strip unknown keys).
-const VALIDATION_BODY = {
-  error: { code: "VALIDATION_ERROR", message: "The request is invalid." },
-}
+// Exact envelope bodies (see `VALIDATION_BODY` in ./helpers).
 const NOT_FOUND_BODY = {
   error: {
     code: "NOT_FOUND",
@@ -29,18 +29,6 @@ const INTERNAL_BODY = {
 }
 const UNAVAILABLE_BODY = {
   error: { code: "UNAVAILABLE", message: "The database is unreachable." },
-}
-
-function expectValidationError(
-  res: LightMyRequestResponse,
-  status: number,
-  details?: ErrorDetail[]
-) {
-  expect(res.statusCode).toBe(status)
-  expect(res.headers["content-type"]).toMatch(/^application\/json/)
-  expect(res.json()).toEqual(
-    details ? { error: { ...VALIDATION_BODY.error, details } } : VALIDATION_BODY
-  )
 }
 
 describe("error handling", () => {
@@ -140,17 +128,13 @@ describe("error handling", () => {
       url: "/api/v1/test/conflict",
     })
     expect(res.statusCode).toBe(409)
-    expect(res.json()).toEqual({
-      error: {
-        code: "CONFLICT",
-        message: "The request conflicts with the stored resource.",
-      },
-    })
+    expect(res.json()).toEqual(CONFLICT_BODY)
   })
 
+  // Malformed JSON, an empty JSON body, 413 and 415 are covered once, on the
+  // real route with no-row checks, in todos.test.ts ("framework errors").
   describe("client-error mapping (AD-5)", () => {
     const url = "/api/v1/test/echo"
-    const json = { "content-type": "application/json" }
 
     it("valid body reaches the route", async () => {
       const res = await t.app.inject({
@@ -159,46 +143,6 @@ describe("error handling", () => {
         payload: { description: "ok" },
       })
       expect(res.statusCode).toBe(200)
-    })
-
-    it("malformed JSON → 400", async () => {
-      const res = await t.app.inject({
-        method: "POST",
-        url,
-        headers: json,
-        payload: '{"description":',
-      })
-      expectValidationError(res, 400)
-    })
-
-    it("JSON content type with an empty body → 400", async () => {
-      const res = await t.app.inject({
-        method: "POST",
-        url,
-        headers: json,
-        payload: "",
-      })
-      expectValidationError(res, 400)
-    })
-
-    it("body over 16 KiB → 413", async () => {
-      const res = await t.app.inject({
-        method: "POST",
-        url,
-        headers: json,
-        payload: JSON.stringify({ description: "x".repeat(17 * 1024) }),
-      })
-      expectValidationError(res, 413)
-    })
-
-    it("unsupported content type → 415", async () => {
-      const res = await t.app.inject({
-        method: "POST",
-        url,
-        headers: { "content-type": "application/xml" },
-        payload: "<description>hi</description>",
-      })
-      expectValidationError(res, 415)
     })
 
     it.each([

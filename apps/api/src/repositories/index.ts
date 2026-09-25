@@ -12,7 +12,11 @@ export interface Repositories {
   todos: TodoRepository
 }
 
-/** The only place outside `db/` that touches Drizzle (AD-7). */
+/**
+ * Builds the repositories over one Drizzle instance. ESLint restricts Drizzle
+ * imports to `repositories/` and `db/` (AD-7); this file just wires the
+ * repositories up.
+ */
 export function createRepositories(pool: pg.Pool): Repositories {
   const db = createDb(pool)
   return {

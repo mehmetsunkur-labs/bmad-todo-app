@@ -20,7 +20,12 @@ export const QUOTE_MAX = 40
  */
 export interface AddRowController {
   getValue(): string
-  setValue(value: string): void
+  /**
+   * Puts a failed create's Description back into the empty input and
+   * remembers its `id`: submitting the same normalized text again reuses it,
+   * so a POST that committed but timed out is replayed, not duplicated.
+   */
+  restore(description: string, id: string): void
   focus(): void
   /** Whether focus is inside the Add row form. */
   containsFocus(): boolean
@@ -44,7 +49,7 @@ export function quoteDescription(description: string): string {
     : `${chars.slice(0, QUOTE_MAX).join("")}…`
 }
 
-function isTooLong(error: unknown): boolean {
+export function isTooLong(error: unknown): boolean {
   return (
     error instanceof HttpError &&
     !!error.details?.some((detail) => detail.reason === "too_long")
@@ -55,9 +60,9 @@ function isTooLong(error: unknown): boolean {
  * The create kind's failure handler (the row is already rolled back). The
  * API's `message` is never shown; every failure kind maps to this copy.
  *
- * - Input empty: the sent (normalized) Description goes back into the input,
- *   focus moves there only from `<body>` or the Add row, and a plain toast
- *   says so.
+ * - Input empty: the sent (normalized) Description goes back into the input
+ *   (with its `id`, reused if that text is resubmitted unchanged), focus
+ *   moves there only from `<body>` or the Add row, and a plain toast says so.
  * - Input has text: it is left alone, and a persistent toast quotes the
  *   failed Description with "Retry" (same `id` and Description).
  * - `too_long`: the too-long copy replaces either message.
@@ -70,7 +75,7 @@ export function showCreateFailure({ vars, error, retry }: CreateTodoFailure) {
     const active = document.activeElement
     const focusWasFree = !active || active === document.body
     const focusInAddRow = addRow.containsFocus()
-    addRow.setValue(vars.description)
+    addRow.restore(vars.description, vars.id)
     if (focusWasFree || focusInAddRow) addRow.focus()
     showErrorToast(tooLong ? TOO_LONG_COPY : CREATE_RESTORED_COPY)
     return

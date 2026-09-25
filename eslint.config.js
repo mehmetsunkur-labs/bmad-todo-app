@@ -5,6 +5,18 @@ import reactRefresh from "eslint-plugin-react-refresh"
 import tseslint from "typescript-eslint"
 import { defineConfig, globalIgnores } from "eslint/config"
 
+const API_TO_WEB_PATTERNS = [
+  { group: ["@todos/web", "@todos/web/*"] },
+  {
+    // Also relative escapes such as ../../web/src/x or ../apps/web
+    regex: "(^|/)apps/web(/|$)|(^|/)\\.\\./web(/|$)",
+    message: "apps/api must not import apps/web.",
+  },
+]
+
+const FETCH_MESSAGE =
+  "Only apps/web/src/api/http.ts may call fetch; use request() or its wrappers."
+
 export default defineConfig([
   globalIgnores([
     "**/dist",
@@ -68,15 +80,46 @@ export default defineConfig([
       "no-restricted-imports": [
         "error",
         {
+          patterns: API_TO_WEB_PATTERNS,
+        },
+      ],
+    },
+  },
+  {
+    // AD-7: only repositories and db/ import Drizzle. Flat config replaces the
+    // rule for these files, so the api→web patterns are repeated.
+    files: ["apps/api/src/**/*.ts"],
+    ignores: ["apps/api/src/repositories/**", "apps/api/src/db/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
           patterns: [
-            { group: ["@todos/web", "@todos/web/*"] },
+            ...API_TO_WEB_PATTERNS,
             {
-              // Also relative escapes such as ../../web/src/x or ../apps/web
-              regex: "(^|/)apps/web(/|$)|(^|/)\\.\\./web(/|$)",
-              message: "apps/api must not import apps/web.",
+              group: ["drizzle-orm", "drizzle-orm/*"],
+              message:
+                "Only apps/api/src/repositories and apps/api/src/db may import Drizzle.",
             },
           ],
         },
+      ],
+    },
+  },
+  {
+    // AD-6: `http.ts` is the only `fetch` caller in the web app.
+    files: ["apps/web/src/**/*.{ts,tsx}"],
+    ignores: ["apps/web/src/api/http.ts", "**/*.test.*"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        { name: "fetch", message: FETCH_MESSAGE },
+      ],
+      "no-restricted-properties": [
+        "error",
+        { object: "window", property: "fetch", message: FETCH_MESSAGE },
+        { object: "globalThis", property: "fetch", message: FETCH_MESSAGE },
+        { object: "self", property: "fetch", message: FETCH_MESSAGE },
       ],
     },
   },

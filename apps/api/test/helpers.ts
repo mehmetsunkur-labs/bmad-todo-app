@@ -1,7 +1,9 @@
 import { Writable } from "node:stream"
 
-import type { FastifyInstance } from "fastify"
+import type { ErrorDetail } from "@todos/shared"
+import type { FastifyInstance, LightMyRequestResponse } from "fastify"
 import type pg from "pg"
+import { expect } from "vitest"
 
 import { buildApp } from "../src/app"
 import { createPool } from "../src/db/client"
@@ -87,4 +89,29 @@ export async function migrateTestDatabase(
 /** Empties `todos` so every test starts from a known state. */
 export async function truncateTodos(pool: pg.Pool): Promise<void> {
   await pool.query("TRUNCATE TABLE todos")
+}
+
+// Exact envelope bodies: asserted on the raw `res.json()` with `toEqual`, so a
+// leaked key fails the test (the shared response schemas strip unknown keys).
+export const VALIDATION_BODY = {
+  error: { code: "VALIDATION_ERROR", message: "The request is invalid." },
+}
+export const CONFLICT_BODY = {
+  error: {
+    code: "CONFLICT",
+    message: "The request conflicts with the stored resource.",
+  },
+}
+
+/** A JSON `VALIDATION_ERROR` envelope with `status`, and exactly `details` if given. */
+export function expectValidationError(
+  res: LightMyRequestResponse,
+  status: number,
+  details?: ErrorDetail[]
+): void {
+  expect(res.statusCode).toBe(status)
+  expect(res.headers["content-type"]).toMatch(/^application\/json/)
+  expect(res.json()).toEqual(
+    details ? { error: { ...VALIDATION_BODY.error, details } } : VALIDATION_BODY
+  )
 }
