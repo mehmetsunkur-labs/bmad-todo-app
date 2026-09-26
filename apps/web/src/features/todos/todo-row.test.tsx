@@ -1,25 +1,33 @@
 import { act, fireEvent, screen, within } from "@testing-library/react"
+import type { QueryClient } from "@tanstack/react-query"
 import { REQUEST_TIMEOUT_MS, type Todo } from "@todos/shared"
 import { describe, expect, it } from "vitest"
 
-import { createQueryClient, TODOS_QUERY_KEY } from "@/api/query-client"
+import { TODOS_QUERY_KEY } from "@/api/query-client"
 import { getTodoSync } from "@/api/todo-sync"
 import {
   advance,
-  deferredFetch as makeDeferredFetch,
+  callsWith,
+  deferredFetchSameAct as deferredFetch,
   fetchMock,
   hangingFetch,
+  patches,
   setupFetchAndFakeTimers,
 } from "@/test/fetch"
-import { jsonResponse, makeTodo, renderWithProviders } from "@/test/render"
-
-import { TodoList } from "./todo-list"
+import { notFound, serverError } from "@/test/fixtures"
+import {
+  addInput,
+  announcer,
+  checkbox,
+  click,
+  rows,
+  toasts,
+} from "@/test/queries"
+import { jsonResponse, makeTodo } from "@/test/render"
+import { renderPopulated as renderTodoList } from "@/test/render-todo-list"
 
 const TOGGLE_FAILED = "Couldn't update that todo. Please try again."
 const CREATE_RESTORED = "Couldn't add that todo. Your text is back in the box."
-
-/** A fetch whose response the test releases by hand (flushed in the same act). */
-const deferredFetch = () => makeDeferredFetch({ flushInSameAct: true })
 
 const newer = makeTodo({
   id: "00000000-0000-7000-8000-000000000002",
@@ -32,45 +40,13 @@ const older = makeTodo({
   createdAt: "2026-09-24T09:00:00.000Z",
 })
 
-async function renderPopulated(
+const renderPopulated = (
   todos: Todo[] = [newer, older],
-  queryClient = createQueryClient()
-) {
-  fetchMock.mockResolvedValueOnce(jsonResponse({ todos }))
-  const result = renderWithProviders(<TodoList />, { queryClient })
-  await advance(0)
-  return result
-}
+  queryClient?: QueryClient
+) => renderTodoList(todos, { queryClient })
 
-const checkbox = (name: string) => screen.getByRole("checkbox", { name })
 const queryCheckbox = (name: string) => screen.queryByRole("checkbox", { name })
 const description = (name: string) => screen.getByText(name, { selector: "p" })
-const rows = () =>
-  within(screen.getByRole("list", { name: "Todos" }))
-    .queryAllByRole("listitem")
-    .map((li) => li.querySelector("p")!.textContent)
-const announcer = () => screen.getByTestId("announcer")
-/** Toast messages on screen (each toast's message has role="status"). */
-const toasts = () =>
-  screen
-    .queryAllByRole("status")
-    .filter((el) =>
-      el.closest("[data-sonner-toast]:not([data-removed='true'])")
-    )
-    .map((el) => el.textContent)
-const patches = () =>
-  fetchMock.mock.calls
-    .filter(([, init]) => init?.method === "PATCH")
-    .map(([path, init]) => ({
-      path,
-      body: JSON.parse(init!.body as string) as unknown,
-    }))
-
-async function click(element: HTMLElement) {
-  await act(async () => {
-    fireEvent.click(element)
-  })
-}
 
 function expectCompleted(name: string) {
   const box = checkbox(name)
@@ -88,9 +64,6 @@ function expectActive(name: string) {
   expect(description(name)).not.toHaveClass("line-through")
   expect(description(name)).not.toHaveClass("text-muted-foreground")
 }
-
-const serverError = () =>
-  jsonResponse({ error: { code: "INTERNAL", message: "db exploded" } }, 500)
 
 setupFetchAndFakeTimers(new Date("2026-09-24T15:30:00.000Z"))
 
@@ -332,12 +305,7 @@ describe("TodoRow: toggle failure", () => {
 
   it("PATCH 404: the Todo is gone, so the row is removed, with one toggle toast; focus moves to the previous row", async () => {
     const { queryClient } = await renderPopulated()
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse(
-        { error: { code: "NOT_FOUND", message: "Todo not found" } },
-        404
-      )
-    )
+    fetchMock.mockResolvedValueOnce(notFound())
 
     act(() => checkbox("Older").focus())
     await click(checkbox("Older"))
@@ -355,7 +323,7 @@ describe("TodoRow: toggle failure", () => {
     await renderPopulated()
     const post = deferredFetch()
 
-    const input = screen.getByRole("textbox", { name: "New todo" })
+    const input = addInput()
     fireEvent.change(input, { target: { value: "Brand new" } })
     await act(async () => {
       fireEvent.submit(input.closest("form")!)
@@ -399,7 +367,7 @@ describe("TodoRow: seeding and reload", () => {
     const { queryClient } = await renderPopulated()
     const post = deferredFetch()
 
-    const input = screen.getByRole("textbox", { name: "New todo" })
+    const input = addInput()
     fireEvent.change(input, { target: { value: "Brand new" } })
     await act(async () => {
       fireEvent.submit(input.closest("form")!)
@@ -411,10 +379,10 @@ describe("TodoRow: seeding and reload", () => {
     })
     expect(rows()).toEqual(["Brand new", "Newer", "Older"])
 
-    const body = JSON.parse(
-      fetchMock.mock.calls.find(([, init]) => init?.method === "POST")![1]!
-        .body as string
-    ) as { id: string; description: string }
+    const body = JSON.parse(callsWith("POST")[0]![1]!.body as string) as {
+      id: string
+      description: string
+    }
     await post.resolve(
       jsonResponse(
         makeTodo({ ...body, createdAt: "2026-09-24T15:30:00.000Z" }),

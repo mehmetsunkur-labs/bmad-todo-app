@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest"
 import { getTodoSync } from "@/api/todo-sync"
 import {
   advance,
-  deferredFetch as makeDeferredFetch,
+  deferredFetchSameAct as deferredFetch,
   fetchMock,
   hangingFetch,
   setupFetchAndFakeTimers,
@@ -14,9 +14,6 @@ import {
 import { jsonResponse, makeTodo, renderWithProviders } from "@/test/render"
 
 import { TodoList } from "./todo-list"
-
-/** A fetch whose response the test releases by hand (flushed in the same act). */
-const deferredFetch = () => makeDeferredFetch({ flushInSameAct: true })
 
 const skeletons = () => screen.queryAllByTestId("todo-skeleton")
 const list = () => screen.queryByRole("list", { name: "Todos" })
