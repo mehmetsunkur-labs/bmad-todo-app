@@ -43,3 +43,4 @@
   summary: Move the duplicated web test helpers into `apps/web/src/test/*` (Epic 2 retro F7, the rest of item 13). This covers `renderPopulated`, `toasts`, `announcer`, `rows`, `checkbox`, `serverError`, `notFound`, `callsWith`, the `deferredFetch` wrapper, the fixtures, and one `stubAnimate`, plus the 4 copies of `deferred()` and `setup()` in `todo-sync.test.ts`.
   evidence: Split from the TodoList refactor on 2026-09-26. `epic-2-retro-2026-09-25.md` F7 lists the helpers redefined in `todo-row`, `todo-delete`, `todo-edit` and `add-row.test.tsx`, and the two differing `stubAnimate`s (`add-row.test.tsx:794`, `todo-delete.test.tsx:523`).
   owner: Dev
+  resolution: Done on 2026-09-26 by `_bmad-output/implementation-artifacts/spec-shared-web-test-helpers.md`: shared `queries.ts`, `fixtures.ts`, `animate.ts`, `render-todo-list.tsx` and `fetch.ts` helpers, and one `deferred`/`flush`/`setup` in `todo-sync.test.ts`. The per-file test counts are unchanged (283).

@@ -4,19 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { PLAIN_TOAST_MS, showErrorToast } from "@/lib/toast"
 import { advance } from "@/test/fetch"
 import { setMediaQuery } from "@/test/media"
+import { toasts } from "@/test/queries"
 
 import { Toaster } from "./sonner"
 
 const RESTORED = "Couldn't add that todo. Your text is back in the box."
-
-/** Toast messages on screen (each toast's message has role="status"). */
-const toasts = () =>
-  screen
-    .queryAllByRole("status")
-    .filter((el) =>
-      el.closest("[data-sonner-toast]:not([data-removed='true'])")
-    )
-    .map((el) => el.textContent)
 
 /** Something outside the toasts to move focus to. */
 const outside = () => screen.getByRole("textbox", { name: "Outside" })

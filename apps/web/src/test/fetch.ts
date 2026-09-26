@@ -76,3 +76,18 @@ export function setupFetchAndFakeTimers(systemTime: Date) {
     fetchMock.mockReset()
   })
 }
+
+/** A `deferredFetch` whose `resolve` flushes timers in the same `act`. */
+export const deferredFetchSameAct = () =>
+  deferredFetch({ flushInSameAct: true })
+
+/** The `fetchMock` calls made with `method`. */
+export const callsWith = (method: string) =>
+  fetchMock.mock.calls.filter(([, init]) => init?.method === method)
+
+/** Each PATCH sent, as its path and parsed JSON body. */
+export const patches = () =>
+  callsWith("PATCH").map(([path, init]) => ({
+    path,
+    body: JSON.parse(init!.body as string) as unknown,
+  }))

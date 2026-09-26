@@ -1,20 +1,33 @@
 import { StrictMode, useEffect } from "react"
+import type { QueryClient } from "@tanstack/react-query"
 import { act, fireEvent, screen, within } from "@testing-library/react"
 import { REQUEST_TIMEOUT_MS, type Todo } from "@todos/shared"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { useToggleTodo, type ToggleTodoVars } from "@/api/hooks/use-toggle-todo"
-import { createQueryClient } from "@/api/query-client"
 import { getTodoSync } from "@/api/todo-sync"
 import { setMediaQuery } from "@/test/media"
+import { stubAnimate, unstubAnimate, type FakeAnimation } from "@/test/animate"
 import {
   advance,
-  deferredFetch as makeDeferredFetch,
+  callsWith,
+  deferredFetchSameAct as deferredFetch,
   fetchMock,
   hangingFetch,
   setupFetchAndFakeTimers,
 } from "@/test/fetch"
-import { jsonResponse, makeTodo, renderWithProviders } from "@/test/render"
+import { bottom, middle, notFound, serverError, top } from "@/test/fixtures"
+import {
+  addInput,
+  announcer,
+  checkbox,
+  deleteButton,
+  focusAndClick,
+  rows as listRows,
+  toasts,
+} from "@/test/queries"
+import { jsonResponse, renderWithProviders } from "@/test/render"
+import { renderPopulated as renderTodoList } from "@/test/render-todo-list"
 import {
   HOVER_POINTER_QUERY,
   REDUCED_MOTION_QUERY,
@@ -27,25 +40,6 @@ import { showToggleFailure } from "./toggle-failure"
 const DELETE_FAILED = "Couldn't delete that todo. Please try again."
 const CREATE_RESTORED = "Couldn't add that todo. Your text is back in the box."
 
-/** A fetch whose response the test releases by hand (flushed in the same act). */
-const deferredFetch = () => makeDeferredFetch({ flushInSameAct: true })
-
-const top = makeTodo({
-  id: "00000000-0000-7000-8000-000000000003",
-  description: "Top",
-  createdAt: "2026-09-24T11:00:00.000Z",
-})
-const middle = makeTodo({
-  id: "00000000-0000-7000-8000-000000000002",
-  description: "Middle",
-  createdAt: "2026-09-24T10:00:00.000Z",
-})
-const bottom = makeTodo({
-  id: "00000000-0000-7000-8000-000000000001",
-  description: "Bottom",
-  createdAt: "2026-09-24T09:00:00.000Z",
-})
-
 /** Renders the list, plus an optional probe that can queue a toggle by id. */
 let queueToggle: ((vars: ToggleTodoVars) => void) | undefined
 function ToggleProbe() {
@@ -56,66 +50,26 @@ function ToggleProbe() {
   return null
 }
 
-async function renderPopulated(
+const renderPopulated = (
   todos: Todo[] = [top, middle, bottom],
-  { probe = false, queryClient = createQueryClient() } = {}
-) {
-  fetchMock.mockResolvedValueOnce(jsonResponse({ todos }))
-  const result = renderWithProviders(
-    <>
-      <TodoList />
-      {probe && <ToggleProbe />}
-    </>,
-    { queryClient }
-  )
-  await advance(0)
-  return result
-}
+  {
+    probe = false,
+    queryClient,
+  }: { probe?: boolean; queryClient?: QueryClient } = {}
+) => renderTodoList(todos, { queryClient, extra: probe && <ToggleProbe /> })
 
-const checkbox = (name: string) => screen.getByRole("checkbox", { name })
-const deleteButton = (name: string) =>
-  screen.getByRole("button", { name: `Delete todo: ${name}` })
 const queryRow = (name: string) =>
   screen.queryByText(name, { selector: "li p" })?.closest("li") ?? null
-const rows = () => {
-  const list = screen.queryByRole("list", { name: "Todos" })
-  if (!list) return []
-  return within(list)
-    .queryAllByRole("listitem")
-    .map((li) => li.querySelector("p")!.textContent)
-}
-const addInput = () => screen.getByRole("textbox", { name: "New todo" })
-const announcer = () => screen.getByTestId("announcer")
-/** Toast messages on screen (each toast's message has role="status"). */
-const toasts = () =>
-  screen
-    .queryAllByRole("status")
-    .filter((el) =>
-      el.closest("[data-sonner-toast]:not([data-removed='true'])")
-    )
-    .map((el) => el.textContent)
-const callsWith = (method: string) =>
-  fetchMock.mock.calls.filter(([, init]) => init?.method === method)
+const rows = () => listRows({ allowMissing: true })
 const deletes = () => callsWith("DELETE")
 
-async function click(element: HTMLElement) {
-  await act(async () => {
-    element.focus()
-    fireEvent.click(element)
-  })
-}
-
 const noContent = () => new Response(null, { status: 204 })
-const notFound = () =>
-  jsonResponse({ error: { code: "NOT_FOUND", message: "Todo not found" } }, 404)
-const serverError = () =>
-  jsonResponse({ error: { code: "INTERNAL", message: "db exploded" } }, 500)
 
 setupFetchAndFakeTimers(new Date("2026-09-24T15:30:00.000Z"))
 
 afterEach(() => {
   // jsdom has no Web Animations API; drop any stub a test installed.
-  delete (HTMLElement.prototype as Partial<HTMLElement>).animate
+  unstubAnimate()
   queueToggle = undefined
 })
 
@@ -190,7 +144,7 @@ describe("TodoRow: delete", () => {
     await renderPopulated()
     const del = deferredFetch()
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
 
     // Before any response.
     expect(rows()).toEqual(["Top", "Bottom"])
@@ -222,7 +176,7 @@ describe("TodoRow: delete", () => {
     )
     expect(fireEvent.keyDown(button, { key: " ", code: "Space" })).toBe(true)
     // jsdom doesn't synthesize the click a browser would; dispatch it.
-    await click(button)
+    await focusAndClick(button)
     await advance(0)
 
     expect(rows()).toEqual(["Top", "Bottom"])
@@ -233,7 +187,7 @@ describe("TodoRow: delete", () => {
     await renderPopulated()
     fetchMock.mockResolvedValueOnce(noContent())
 
-    await click(deleteButton("Bottom"))
+    await focusAndClick(deleteButton("Bottom"))
     await advance(0)
 
     expect(rows()).toEqual(["Top", "Middle"])
@@ -245,7 +199,7 @@ describe("TodoRow: delete", () => {
     const form = addInput().closest("form")!
     fetchMock.mockResolvedValueOnce(noContent())
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     await advance(0)
 
     expect(addInput()).toHaveFocus()
@@ -267,9 +221,9 @@ describe("TodoRow: delete", () => {
     await renderPopulated()
     fetchMock.mockResolvedValue(noContent())
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     // Middle is still fading; deleting Top skips it for Bottom.
-    await click(deleteButton("Top"))
+    await focusAndClick(deleteButton("Top"))
 
     expect(checkbox("Bottom")).toHaveFocus()
   })
@@ -278,7 +232,7 @@ describe("TodoRow: delete", () => {
     const { queryClient, unmount } = await renderPopulated()
     fetchMock.mockResolvedValueOnce(noContent())
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     await advance(0)
     expect(getTodoSync(queryClient).confirmed.get(middle.id)).toBeNull()
     expect(getTodoSync(queryClient).pending.has(middle.id)).toBe(false)
@@ -293,7 +247,7 @@ describe("TodoRow: delete", () => {
     const { queryClient } = await renderPopulated()
     fetchMock.mockResolvedValueOnce(notFound())
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     await advance(0)
     await advance(1)
 
@@ -316,7 +270,7 @@ describe("TodoRow: delete", () => {
       characterData: true,
     })
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     await advance(0)
     observer.disconnect()
 
@@ -330,7 +284,7 @@ describe("TodoRow: delete failure", () => {
       "a network error",
       async () => {
         fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"))
-        await click(deleteButton("Middle"))
+        await focusAndClick(deleteButton("Middle"))
         await advance(0)
       },
     ],
@@ -338,7 +292,7 @@ describe("TodoRow: delete failure", () => {
       "a 5xx envelope",
       async () => {
         fetchMock.mockResolvedValueOnce(serverError())
-        await click(deleteButton("Middle"))
+        await focusAndClick(deleteButton("Middle"))
         await advance(0)
       },
     ],
@@ -351,7 +305,7 @@ describe("TodoRow: delete failure", () => {
             headers: { "Content-Type": "text/html" },
           })
         )
-        await click(deleteButton("Middle"))
+        await focusAndClick(deleteButton("Middle"))
         await advance(0)
       },
     ],
@@ -359,7 +313,7 @@ describe("TodoRow: delete failure", () => {
       `the ${REQUEST_TIMEOUT_MS} ms timeout`,
       async () => {
         hangingFetch()
-        await click(deleteButton("Middle"))
+        await focusAndClick(deleteButton("Middle"))
         await advance(REQUEST_TIMEOUT_MS - 1)
         expect(rows()).toEqual(["Top", "Bottom"])
         expect(toasts()).toEqual([])
@@ -390,7 +344,7 @@ describe("TodoRow: delete failure", () => {
     await renderPopulated()
     const del = deferredFetch()
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     expect(checkbox("Bottom")).toHaveFocus()
     act(() => addInput().focus())
 
@@ -406,7 +360,7 @@ describe("TodoRow: delete failure", () => {
     await renderPopulated()
     const del = deferredFetch()
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     act(() => (document.activeElement as HTMLElement).blur())
     expect(document.activeElement).toBe(document.body)
 
@@ -420,7 +374,7 @@ describe("TodoRow: delete failure", () => {
     await renderPopulated()
     const del = deferredFetch()
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     act(() => screen.getByTestId("todo-list-region").focus())
 
     await del.resolve(serverError())
@@ -437,7 +391,7 @@ describe("TodoRow: delete failure", () => {
     await renderPopulated()
     fetchMock.mockResolvedValueOnce(serverError())
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     await advance(0)
 
     expect(rows()).toEqual(["Top", "Middle", "Bottom"])
@@ -453,7 +407,7 @@ describe("TodoRow: delete failure", () => {
     await renderPopulated()
     const del = deferredFetch()
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     await act(async () => animations[0]!.finish())
     expect(animations).toHaveLength(2)
     expect(queryRow("Middle")!.style.overflow).toBe("hidden")
@@ -472,7 +426,7 @@ describe("TodoRow: delete failure", () => {
     await renderPopulated(undefined, { probe: true })
     const del = deferredFetch()
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     await act(async () => queueToggle!({ id: middle.id, completed: true }))
     await del.resolve(serverError())
     await advance(0)
@@ -496,7 +450,7 @@ describe("TodoRow: delete failure", () => {
     })
     expect(rows()).toEqual(["Brand new", "Top", "Middle", "Bottom"])
 
-    await click(deleteButton("Brand new"))
+    await focusAndClick(deleteButton("Brand new"))
     expect(rows()).toEqual(["Top", "Middle", "Bottom"])
     // The delete moved focus to the next row's checkbox.
     expect(checkbox("Top")).toHaveFocus()
@@ -601,8 +555,8 @@ describe("TodoRow: delete failure", () => {
     const patch = deferredFetch()
     const del = deferredFetch()
 
-    await click(checkbox("Middle"))
-    await click(deleteButton("Middle"))
+    await focusAndClick(checkbox("Middle"))
+    await focusAndClick(deleteButton("Middle"))
 
     expect(rows()).toEqual(["Top", "Bottom"])
     expect(callsWith("PATCH")).toHaveLength(1)
@@ -623,8 +577,8 @@ describe("TodoRow: a delete queued behind a failed toggle", () => {
     await renderPopulated()
     const patch = deferredFetch()
 
-    await click(checkbox("Middle"))
-    await click(deleteButton("Middle"))
+    await focusAndClick(checkbox("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     expect(rows()).toEqual(["Top", "Bottom"])
     expect(checkbox("Bottom")).toHaveFocus()
 
@@ -645,8 +599,8 @@ describe("TodoRow: a delete queued behind a failed toggle", () => {
     await renderPopulated()
     const patch = deferredFetch()
 
-    await click(checkbox("Middle"))
-    await click(deleteButton("Middle"))
+    await focusAndClick(checkbox("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     expect(checkbox("Bottom")).toHaveFocus()
 
     await patch.resolve(notFound())
@@ -662,14 +616,14 @@ describe("TodoRow: a delete queued behind a failed toggle", () => {
   it("a later failed delete of another row still restores its own focus (no stale entry)", async () => {
     await renderPopulated()
     const patch = deferredFetch()
-    await click(checkbox("Middle"))
-    await click(deleteButton("Middle"))
+    await focusAndClick(checkbox("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     await patch.resolve(serverError())
     await advance(0)
     expect(checkbox("Middle")).toHaveFocus()
 
     fetchMock.mockResolvedValueOnce(serverError())
-    await click(deleteButton("Top"))
+    await focusAndClick(deleteButton("Top"))
     await advance(0)
 
     expect(rows()).toEqual(["Top", "Middle", "Bottom"])
@@ -681,15 +635,15 @@ describe("TodoRow: a dropped delete that counts as done, then another failed del
   it("PATCH 404 behind which a delete was dropped: a later failed delete of another row restores its own focus", async () => {
     await renderPopulated()
     const patch = deferredFetch()
-    await click(checkbox("Middle"))
-    await click(deleteButton("Middle"))
+    await focusAndClick(checkbox("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     await patch.resolve(notFound())
     await advance(0)
     expect(rows()).toEqual(["Top", "Bottom"])
     expect(toasts()).toEqual([])
 
     const del = deferredFetch()
-    await click(deleteButton("Top"))
+    await focusAndClick(deleteButton("Top"))
     expect(checkbox("Bottom")).toHaveFocus()
     await del.resolve(serverError())
     await advance(0)
@@ -717,7 +671,7 @@ describe("TodoRow: focus after a removal", () => {
     async (_where, target) => {
       await renderPopulated()
       const patch = deferredFetch()
-      await click(checkbox("Middle"))
+      await focusAndClick(checkbox("Middle"))
       act(() => target("Middle").focus())
 
       await patch.resolve(notFound())
@@ -733,7 +687,7 @@ describe("TodoRow: focus after a removal", () => {
   it("the bottom row: focus goes to the previous row's checkbox", async () => {
     await renderPopulated()
     const patch = deferredFetch()
-    await click(checkbox("Bottom"))
+    await focusAndClick(checkbox("Bottom"))
 
     await patch.resolve(notFound())
     await advance(0)
@@ -745,7 +699,7 @@ describe("TodoRow: focus after a removal", () => {
   it("the only row: focus goes to the Add input", async () => {
     await renderPopulated([middle])
     const patch = deferredFetch()
-    await click(checkbox("Middle"))
+    await focusAndClick(checkbox("Middle"))
 
     await patch.resolve(notFound())
     await advance(0)
@@ -758,9 +712,9 @@ describe("TodoRow: focus after a removal", () => {
     await renderPopulated()
     const patch = deferredFetch()
     const del = deferredFetch()
-    await click(checkbox("Middle"))
+    await focusAndClick(checkbox("Middle"))
     // Bottom is exiting (its DELETE pending); focus goes back to Middle.
-    await click(deleteButton("Bottom"))
+    await focusAndClick(deleteButton("Bottom"))
     act(() => checkbox("Middle").focus())
 
     await patch.resolve(notFound())
@@ -786,7 +740,7 @@ describe("TodoRow: focus after a removal", () => {
     it("a failed delete's restored row keeps the focus it is given", async () => {
       await renderStrict()
       const del = deferredFetch()
-      await click(deleteButton("Middle"))
+      await focusAndClick(deleteButton("Middle"))
       await advance(1000)
       expect(rows()).toEqual(["Top", "Bottom"])
 
@@ -801,7 +755,7 @@ describe("TodoRow: focus after a removal", () => {
     it("a toggle 404 on the focused row still moves focus to the next row", async () => {
       await renderStrict()
       const patch = deferredFetch()
-      await click(checkbox("Middle"))
+      await focusAndClick(checkbox("Middle"))
 
       await patch.resolve(notFound())
       await advance(0)
@@ -814,7 +768,7 @@ describe("TodoRow: focus after a removal", () => {
   it("an unfocused row's removal leaves focus alone", async () => {
     await renderPopulated()
     const patch = deferredFetch()
-    await click(checkbox("Middle"))
+    await focusAndClick(checkbox("Middle"))
     act(() => addInput().focus())
 
     await patch.resolve(notFound())
@@ -844,39 +798,6 @@ describe("TodoRow: focus after a removal", () => {
   })
 })
 
-interface FakeAnimation {
-  keyframes: Keyframe[]
-  options: KeyframeAnimationOptions
-  onfinish: (() => void) | null
-  oncancel: (() => void) | null
-  cancel: ReturnType<typeof vi.fn>
-  finish(): void
-}
-
-/** Stubs the Web Animations API; each call is recorded, finished by hand. */
-function stubAnimate(animations: FakeAnimation[]) {
-  const animate = vi.fn(function (
-    this: HTMLElement,
-    keyframes: Keyframe[],
-    options: KeyframeAnimationOptions
-  ) {
-    const animation: FakeAnimation = {
-      keyframes,
-      options,
-      onfinish: null,
-      oncancel: null,
-      cancel: vi.fn(),
-      finish() {
-        animation.onfinish?.()
-      },
-    }
-    animations.push(animation)
-    return animation as unknown as Animation
-  })
-  HTMLElement.prototype.animate = animate as unknown as HTMLElement["animate"]
-  return animate
-}
-
 describe("TodoRow: exit motion", () => {
   it(`fades over ${ROW_EXIT_FADE_MS} ms, then collapses over ${ROW_EXIT_COLLAPSE_MS} ms, then leaves`, async () => {
     const animations: FakeAnimation[] = []
@@ -884,7 +805,7 @@ describe("TodoRow: exit motion", () => {
     stubAnimate(animations)
     fetchMock.mockResolvedValueOnce(noContent())
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     await advance(0)
 
     // Still shown (inert) while exiting; the Empty state waits for it.
@@ -917,7 +838,7 @@ describe("TodoRow: exit motion", () => {
     await renderPopulated()
     fetchMock.mockResolvedValueOnce(noContent())
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     await advance(0)
 
     expect(queryRow("Middle")).toHaveAttribute("inert")
@@ -931,7 +852,7 @@ describe("TodoRow: exit motion", () => {
     const animate = stubAnimate(animations)
     fetchMock.mockResolvedValueOnce(noContent())
 
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
 
     expect(animate).not.toHaveBeenCalled()
     expect(rows()).toEqual(["Top", "Bottom"])

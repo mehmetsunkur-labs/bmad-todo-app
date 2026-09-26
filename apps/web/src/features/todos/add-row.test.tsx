@@ -1,25 +1,35 @@
-import { act, fireEvent, screen, within } from "@testing-library/react"
+import { act, fireEvent, screen } from "@testing-library/react"
 import {
   normalizeDescription,
   REQUEST_TIMEOUT_MS,
   type Todo,
 } from "@todos/shared"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it } from "vitest"
 
 import { TODOS_QUERY_KEY } from "@/api/query-client"
 import {
   HOVER_POINTER_QUERY,
   REDUCED_MOTION_QUERY,
 } from "@/lib/use-media-query"
+import { stubAnimate, unstubAnimate } from "@/test/animate"
 import {
   advance,
+  callsWith,
   deferredFetch,
   fetchMock,
   hangingFetch,
   setupFetchAndFakeTimers,
 } from "@/test/fetch"
 import { setMediaQuery } from "@/test/media"
+import {
+  addInput as input,
+  announcer,
+  retryButton,
+  rows,
+  toasts,
+} from "@/test/queries"
 import { jsonResponse, makeTodo, renderWithProviders } from "@/test/render"
+import { renderPopulated as renderTodoList } from "@/test/render-todo-list"
 
 import { TodoList } from "./todo-list"
 
@@ -46,41 +56,19 @@ function serverTodo(
   return makeTodo({ ...body, createdAt })
 }
 
-async function renderPopulated(todos: Todo[] = [existing]) {
-  fetchMock.mockResolvedValueOnce(jsonResponse({ todos }))
-  const result = renderWithProviders(<TodoList />)
-  await advance(0)
-  return result
-}
+const renderPopulated = (todos: Todo[] = [existing]) => renderTodoList(todos)
 
-const input = () => screen.getByRole("textbox", { name: "New todo" })
 const addButton = () => screen.getByRole("button", { name: "Add" })
 const form = () => input().closest("form")!
 const counter = () => screen.getByTestId("character-counter")
-const announcer = () => screen.getByTestId("announcer")
-const rows = () =>
-  within(screen.getByRole("list", { name: "Todos" }))
-    .queryAllByRole("listitem")
-    .map((li) => li.querySelector("p")!.textContent)
 const posts = () =>
-  fetchMock.mock.calls
-    .filter(([, init]) => init?.method === "POST")
-    .map(([path, init]) => ({
-      path,
-      body: JSON.parse(init!.body as string) as {
-        id: string
-        description: string
-      },
-    }))
-/** Toast messages on screen (each toast's message has role="status"). */
-const toasts = () =>
-  screen
-    .queryAllByRole("status")
-    .filter((el) =>
-      el.closest("[data-sonner-toast]:not([data-removed='true'])")
-    )
-    .map((el) => el.textContent)
-const retryButton = () => screen.queryByRole("button", { name: "Retry" })
+  callsWith("POST").map(([path, init]) => ({
+    path,
+    body: JSON.parse(init!.body as string) as {
+      id: string
+      description: string
+    },
+  }))
 
 function type(text: string) {
   fireEvent.change(input(), { target: { value: text } })
@@ -808,19 +796,7 @@ describe("Add row: other Todos and toasts", () => {
 })
 
 describe("Add row: new row entrance", () => {
-  function stubAnimate() {
-    const animate = vi.fn(() => ({ onfinish: null, oncancel: null }))
-    Object.defineProperty(HTMLElement.prototype, "animate", {
-      value: animate,
-      configurable: true,
-      writable: true,
-    })
-    return animate
-  }
-
-  afterEach(() => {
-    delete (HTMLElement.prototype as { animate?: unknown }).animate
-  })
+  afterEach(unstubAnimate)
 
   it("loaded rows don't animate; a new row expands its height over 150 ms at full opacity", async () => {
     const animate = stubAnimate()

@@ -1,100 +1,54 @@
+import type { QueryClient } from "@tanstack/react-query"
 import { act, fireEvent, screen, within } from "@testing-library/react"
 import { REQUEST_TIMEOUT_MS, type Todo } from "@todos/shared"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { createQueryClient } from "@/api/query-client"
 import { getTodoSync } from "@/api/todo-sync"
 import { HOVER_POINTER_QUERY } from "@/lib/use-media-query"
 import {
   advance,
-  deferredFetch as makeDeferredFetch,
+  callsWith,
+  deferredFetchSameAct as deferredFetch,
   fetchMock,
   hangingFetch,
+  patches,
   setupFetchAndFakeTimers,
 } from "@/test/fetch"
+import { bottom, middle, notFound, serverError, top } from "@/test/fixtures"
 import { setMediaQuery } from "@/test/media"
-import { jsonResponse, makeTodo, renderWithProviders } from "@/test/render"
-
-import { TodoList } from "./todo-list"
+import {
+  addInput,
+  announcer,
+  checkbox,
+  deleteButton,
+  focusAndClick,
+  retryButton,
+  rows as listRows,
+  toasts,
+} from "@/test/queries"
+import { jsonResponse } from "@/test/render"
+import { renderPopulated as renderTodoList } from "@/test/render-todo-list"
 
 const EDIT_FAILED = "Couldn't save your edit. Please try again."
 const TOO_LONG = "That todo is too long. The limit is 500 characters."
 const TOGGLE_FAILED = "Couldn't update that todo. Please try again."
 const DELETE_FAILED = "Couldn't delete that todo. Please try again."
 
-/** A fetch whose response the test releases by hand (flushed in the same act). */
-const deferredFetch = () => makeDeferredFetch({ flushInSameAct: true })
-
-const top = makeTodo({
-  id: "00000000-0000-7000-8000-000000000003",
-  description: "Top",
-  createdAt: "2026-09-24T11:00:00.000Z",
-})
-const middle = makeTodo({
-  id: "00000000-0000-7000-8000-000000000002",
-  description: "Middle",
-  createdAt: "2026-09-24T10:00:00.000Z",
-})
-const bottom = makeTodo({
-  id: "00000000-0000-7000-8000-000000000001",
-  description: "Bottom",
-  createdAt: "2026-09-24T09:00:00.000Z",
-})
-
-async function renderPopulated(
+const renderPopulated = (
   todos: Todo[] = [top, middle, bottom],
-  queryClient = createQueryClient()
-) {
-  fetchMock.mockResolvedValueOnce(jsonResponse({ todos }))
-  const result = renderWithProviders(<TodoList />, { queryClient })
-  await advance(0)
-  return result
-}
+  queryClient?: QueryClient
+) => renderTodoList(todos, { queryClient })
 
 const rowOf = (todo: Todo) =>
   document.querySelector<HTMLElement>(`li[data-todo-id="${todo.id}"]`)
-const checkbox = (name: string) => screen.getByRole("checkbox", { name })
 const editButton = (name: string) =>
   screen.getByRole("button", { name: `Edit todo: ${name}` })
-const deleteButton = (name: string) =>
-  screen.getByRole("button", { name: `Delete todo: ${name}` })
 const field = () => screen.getByRole("textbox", { name: /^Edit todo: / })
 const queryField = () => screen.queryByRole("textbox", { name: /^Edit todo: / })
 const fieldIn = (todo: Todo) =>
   rowOf(todo)!.querySelector<HTMLTextAreaElement>("textarea")
-const addInput = () => screen.getByRole("textbox", { name: "New todo" })
-const retryButton = () => screen.queryByRole("button", { name: "Retry" })
 /** Each row as shown: the edit field's value, or the Description. */
-const rows = () =>
-  within(screen.getByRole("list", { name: "Todos" }))
-    .queryAllByRole("listitem")
-    .map(
-      (li) =>
-        li.querySelector("textarea")?.value ??
-        li.querySelector("p")!.textContent
-    )
-const announcer = () => screen.getByTestId("announcer")
-const toasts = () =>
-  screen
-    .queryAllByRole("status")
-    .filter((el) =>
-      el.closest("[data-sonner-toast]:not([data-removed='true'])")
-    )
-    .map((el) => el.textContent)
-const callsWith = (method: string) =>
-  fetchMock.mock.calls.filter(([, init]) => init?.method === method)
-const patches = () =>
-  callsWith("PATCH").map(([path, init]) => ({
-    path,
-    body: JSON.parse(init!.body as string) as unknown,
-  }))
-
-async function click(element: HTMLElement) {
-  await act(async () => {
-    element.focus()
-    fireEvent.click(element)
-  })
-}
+const rows = () => listRows({ preferEditField: true })
 
 async function type(text: string, target: HTMLElement = field()) {
   await act(async () => {
@@ -114,7 +68,7 @@ async function focus(element: HTMLElement) {
 
 /** Opens `name`'s edit, types `text`, presses Enter. */
 async function editWithEnter(name: string, text: string) {
-  await click(editButton(name))
+  await focusAndClick(editButton(name))
   await type(text)
   await press("Enter")
 }
@@ -124,10 +78,6 @@ const saved = (todo: Todo, description: string): Todo => ({
   description,
   updatedAt: "2026-09-24T15:30:00.000Z",
 })
-const serverError = () =>
-  jsonResponse({ error: { code: "INTERNAL", message: "db exploded" } }, 500)
-const notFound = () =>
-  jsonResponse({ error: { code: "NOT_FOUND", message: "Todo not found" } }, 404)
 const tooLong = () =>
   jsonResponse(
     {
@@ -197,7 +147,7 @@ describe("TodoRow: Edit button", () => {
 describe("TodoRow: open edit", () => {
   it("Edit: the field shows the Description, focused, all selected; checkbox, Created At and Row actions stay", async () => {
     await renderPopulated()
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
 
     const textarea = field()
     expect(textarea.tagName).toBe("TEXTAREA")
@@ -229,7 +179,7 @@ describe("TodoRow: open edit", () => {
 
   it("the checkbox's accessible name still resolves to the Description while editing", async () => {
     await renderPopulated()
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     expect(checkbox("Middle")).toBeInTheDocument()
   })
 
@@ -252,7 +202,7 @@ describe("TodoRow: open edit", () => {
 
   it("counter: shown and announced at 450, destructive and announced at 500", async () => {
     await renderPopulated()
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     const counter = () =>
       within(rowOf(middle)!).getByTestId("character-counter")
 
@@ -270,7 +220,7 @@ describe("TodoRow: open edit", () => {
 
   it("the field grows to its content height", async () => {
     await renderPopulated()
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     const textarea = field()
     Object.defineProperty(textarea, "scrollHeight", {
       configurable: true,
@@ -286,7 +236,7 @@ describe("TodoRow: save edit", () => {
     await renderPopulated()
     const patch = deferredFetch()
 
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     await type(" Buy  oat\nmilk ")
     expect(field()).toHaveValue(" Buy  oat milk ")
     await press("Enter")
@@ -312,7 +262,7 @@ describe("TodoRow: save edit", () => {
   it("Enter never inserts a line break (the key is prevented)", async () => {
     await renderPopulated()
     fetchMock.mockResolvedValueOnce(jsonResponse(saved(middle, "x")))
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     await type("x")
     const event = new KeyboardEvent("keydown", {
       key: "Enter",
@@ -331,7 +281,7 @@ describe("TodoRow: save edit", () => {
     await renderPopulated()
     fetchMock.mockResolvedValueOnce(jsonResponse(saved(middle, "Changed")))
 
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     await type("Changed")
     await focus(addInput())
 
@@ -347,7 +297,7 @@ describe("TodoRow: save edit", () => {
 
   it("paste: every line break becomes a space", async () => {
     await renderPopulated()
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     await type("a\r\nb\nc")
     expect(field()).toHaveValue("a b c")
   })
@@ -374,7 +324,7 @@ describe("TodoRow: save edit", () => {
 
   it("no-op on blur: closes with no request", async () => {
     await renderPopulated()
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     await type("")
     await focus(addInput())
     expect(queryField()).toBeNull()
@@ -395,9 +345,9 @@ describe("TodoRow: save edit", () => {
     await renderPopulated()
     fetchMock.mockResolvedValueOnce(jsonResponse(saved(middle, "Changed")))
 
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     await type("Changed")
-    await click(editButton("Bottom"))
+    await focusAndClick(editButton("Bottom"))
 
     expect(patches()).toEqual([
       { path: `/api/v1/todos/${middle.id}`, body: { description: "Changed" } },
@@ -431,12 +381,12 @@ describe("TodoRow: cancel edit", () => {
   it("Escape with a toast visible: canceled, Description restored, focus on Edit, toast kept; the next Escape dismisses it", async () => {
     await renderPopulated()
     fetchMock.mockResolvedValueOnce(serverError())
-    await click(checkbox("Top"))
+    await focusAndClick(checkbox("Top"))
     await advance(0)
     await advance(1)
     expect(toasts()).toEqual([TOGGLE_FAILED])
 
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     await type("Changed")
     const event = new KeyboardEvent("keydown", {
       key: "Escape",
@@ -464,7 +414,7 @@ describe("TodoRow: cancel edit", () => {
 
   it("the blur caused by closing doesn't save after Escape", async () => {
     await renderPopulated()
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     await type("Changed")
     await press("Escape")
     await focus(addInput())
@@ -539,7 +489,7 @@ describe("TodoRow: edit failure", () => {
   it("none open, focus moved elsewhere: the row reopens without taking focus", async () => {
     await renderPopulated()
     const patch = deferredFetch()
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     await type("Changed")
     await focus(addInput())
 
@@ -585,7 +535,7 @@ describe("TodoRow: edit failure", () => {
     await renderPopulated()
     const patch = deferredFetch()
     await editWithEnter("Middle", "Changed")
-    await click(editButton("Bottom"))
+    await focusAndClick(editButton("Bottom"))
     await type("Typing here")
 
     await patch.resolve(serverError())
@@ -613,7 +563,7 @@ describe("TodoRow: edit failure", () => {
     await renderPopulated()
     const patch = deferredFetch()
     await editWithEnter("Middle", "Changed")
-    await click(editButton("Changed"))
+    await focusAndClick(editButton("Changed"))
     await type("Typing here")
 
     await patch.resolve(serverError())
@@ -629,7 +579,7 @@ describe("TodoRow: edit failure", () => {
     const patch = deferredFetch()
     const long = "x".repeat(45)
     await editWithEnter("Middle", long)
-    await click(editButton("Bottom"))
+    await focusAndClick(editButton("Bottom"))
 
     await patch.resolve(serverError())
     await advance(0)
@@ -679,7 +629,7 @@ describe("TodoRow: edit failure", () => {
     await renderPopulated()
     const patch = deferredFetch()
     await editWithEnter("Middle", "Changed")
-    await click(editButton("Bottom"))
+    await focusAndClick(editButton("Bottom"))
 
     await patch.resolve(tooLong())
     await advance(0)
@@ -693,7 +643,7 @@ describe("TodoRow: edit failure", () => {
     await renderPopulated()
     const patch = deferredFetch()
     await editWithEnter("Middle", "Changed")
-    await click(deleteButton("Changed"))
+    await focusAndClick(deleteButton("Changed"))
     expect(checkbox("Bottom")).toHaveFocus()
 
     expect(callsWith("DELETE")).toHaveLength(0)
@@ -715,7 +665,7 @@ describe("TodoRow: edit failure", () => {
     await renderPopulated()
     const patch = deferredFetch()
     await editWithEnter("Middle", "Changed")
-    await click(deleteButton("Changed"))
+    await focusAndClick(deleteButton("Changed"))
     expect(checkbox("Bottom")).toHaveFocus()
 
     await patch.resolve(notFound())
@@ -733,8 +683,8 @@ describe("TodoRow: edit failure", () => {
     await renderPopulated()
     const patch = deferredFetch()
     await editWithEnter("Middle", "Changed")
-    await click(deleteButton("Changed"))
-    await click(editButton("Top"))
+    await focusAndClick(deleteButton("Changed"))
+    await focusAndClick(editButton("Top"))
     await type("Typing")
 
     await patch.resolve(serverError())
@@ -752,7 +702,7 @@ describe("TodoRow: edit failure", () => {
     await renderPopulated()
     const patch = deferredFetch()
     await editWithEnter("Middle", "Changed")
-    await click(deleteButton("Changed"))
+    await focusAndClick(deleteButton("Changed"))
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }))
 
     await patch.resolve(jsonResponse(saved(middle, "Changed")))
@@ -768,7 +718,7 @@ describe("TodoRow: edit robustness", () => {
   /** Edits Middle, blurs to the Add input, and fails: reopened unfocused. */
   async function reopenMiddleUnfocused() {
     const patch = deferredFetch()
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     await type("Changed")
     await focus(addInput())
     await patch.resolve(serverError())
@@ -782,7 +732,7 @@ describe("TodoRow: edit robustness", () => {
     await reopenMiddleUnfocused()
     fetchMock.mockResolvedValueOnce(jsonResponse(saved(middle, "Changed")))
 
-    await click(editButton("Bottom"))
+    await focusAndClick(editButton("Bottom"))
 
     expect(patches()).toHaveLength(2)
     expect(patches()[1]).toEqual({
@@ -800,7 +750,7 @@ describe("TodoRow: edit robustness", () => {
     await renderPopulated()
     await reopenMiddleUnfocused()
 
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
 
     expect(fieldIn(middle)).toHaveFocus()
     expect(fieldIn(middle)).toHaveValue("Changed")
@@ -811,7 +761,7 @@ describe("TodoRow: edit robustness", () => {
     await renderPopulated()
     await reopenMiddleUnfocused()
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }))
-    await click(deleteButton("Middle"))
+    await focusAndClick(deleteButton("Middle"))
     await advance(0)
     expect(rows()).toEqual(["Top", "Bottom"])
 
@@ -830,7 +780,7 @@ describe("TodoRow: edit robustness", () => {
     ["a keyCode 229 Enter", { key: "Enter", keyCode: 229 }],
   ])("%s makes no PATCH and leaves the field open", async (_name, init) => {
     await renderPopulated()
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     await type("Changed")
 
     await act(async () => {
@@ -844,7 +794,7 @@ describe("TodoRow: edit robustness", () => {
 
   it("a mid-text line break becomes a space with the caret just after it", async () => {
     await renderPopulated()
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     const textarea = field() as HTMLTextAreaElement
     const setValue = Object.getOwnPropertyDescriptor(
       HTMLTextAreaElement.prototype,
@@ -863,7 +813,7 @@ describe("TodoRow: edit robustness", () => {
 
   it("leaving the window blurs without saving; the field stays open", async () => {
     await renderPopulated()
-    await click(editButton("Middle"))
+    await focusAndClick(editButton("Middle"))
     await type("Half typed")
     vi.mocked(document.hasFocus).mockReturnValue(false)
 

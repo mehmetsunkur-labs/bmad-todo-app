@@ -20,6 +20,86 @@ import {
   type TodoWriteKind,
 } from "./todo-sync"
 
+const NEW_ID = "0199a0b2-3c4d-7e8f-9a0b-000000000099"
+const todo = makeTodo({
+  id: "00000000-0000-7000-8000-000000000001",
+  description: "todo",
+  createdAt: "2026-09-24T09:00:00.000Z",
+})
+const other = makeTodo({
+  id: "00000000-0000-7000-8000-000000000002",
+  description: "other",
+  createdAt: "2026-09-24T10:00:00.000Z",
+})
+
+/** A request the test settles by hand. */
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+/**
+ * A query client whose sync and Todos cache are seeded with `seed`;
+ * `seeded` is the cached list right after seeding.
+ */
+function setup(seed: Todo[], { spyInvalidate = true } = {}) {
+  const queryClient = createQueryClient()
+  // As useTodosQuery sets it: rows keep their objects across writes.
+  queryClient.setQueryDefaults(TODOS_QUERY_KEY, { structuralSharing: false })
+  const invalidate = spyInvalidate
+    ? vi.spyOn(queryClient, "invalidateQueries")
+    : undefined
+  const sync = getTodoSync(queryClient)
+  sync.seedFromList(seed)
+  queryClient.setQueryData<Todo[]>(TODOS_QUERY_KEY, [...seed])
+  const list = () => queryClient.getQueryData<Todo[]>(TODOS_QUERY_KEY)!
+  const find = (id: string) => list().find((t) => t.id === id)
+  const ids = () => list().map((t) => t.id)
+  const seeded = list()
+  return { queryClient, invalidate, sync, list, find, ids, seeded }
+}
+
+interface ToggleVars {
+  id: string
+  completed: boolean
+}
+
+function toggleKind(
+  request: (vars: ToggleVars) => Promise<Todo | null>,
+  onFailure = vi.fn()
+) {
+  const mutation = createTodoMutation<ToggleVars>("toggle", {
+    op: (vars) => toggleOp(vars.completed),
+    request,
+    failureState: notFoundMeansDeleted,
+    onFailure,
+  })
+  return { mutation, onFailure }
+}
+
+interface DeleteVars {
+  id: string
+}
+
+function deleteKind(
+  request: (vars: DeleteVars) => Promise<Todo | null>,
+  onFailure = vi.fn()
+) {
+  const mutation = createTodoMutation<DeleteVars>("delete", {
+    op: deleteOp,
+    request,
+    onFailure,
+  })
+  return { mutation, onFailure }
+}
+
 describe("todo-sync seedFromList", () => {
   it("confirms every listed Todo and nulls confirmed ids that are gone", () => {
     const sync = createTodoSync()
@@ -138,7 +218,6 @@ describe("todo-sync toggleOp and notFoundMeansDeleted", () => {
 })
 
 describe("createTodoMutation (AD-12)", () => {
-  const NEW_ID = "0199a0b2-3c4d-7e8f-9a0b-000000000099"
   const older = makeTodo({
     id: "00000000-0000-7000-8000-000000000001",
     description: "older",
@@ -149,32 +228,6 @@ describe("createTodoMutation (AD-12)", () => {
     description: "newer",
     createdAt: "2026-09-24T10:00:00.000Z",
   })
-
-  /** A request the test settles by hand. */
-  function deferred<T>() {
-    let resolve!: (value: T) => void
-    let reject!: (error: unknown) => void
-    const promise = new Promise<T>((res, rej) => {
-      resolve = res
-      reject = rej
-    })
-    return { promise, resolve, reject }
-  }
-
-  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
-
-  function setup() {
-    const queryClient = createQueryClient()
-    // As useTodosQuery sets it: rows keep their objects across writes.
-    queryClient.setQueryDefaults(TODOS_QUERY_KEY, { structuralSharing: false })
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
-    const sync = getTodoSync(queryClient)
-    sync.seedFromList([newer, older])
-    queryClient.setQueryData<Todo[]>(TODOS_QUERY_KEY, [newer, older])
-    const list = () => queryClient.getQueryData<Todo[]>(TODOS_QUERY_KEY)!
-    const [cachedNewer, cachedOlder] = list()
-    return { queryClient, invalidate, sync, list, cachedNewer, cachedOlder }
-  }
 
   interface Vars {
     id: string
@@ -195,7 +248,7 @@ describe("createTodoMutation (AD-12)", () => {
   }
 
   it("uses scope { id } and the pinned mutation defaults", () => {
-    const { queryClient } = setup()
+    const { queryClient } = setup([newer, older])
     const { mutation } = createKind(vi.fn())
     const options = mutation.options(queryClient, {
       id: NEW_ID,
@@ -208,8 +261,13 @@ describe("createTodoMutation (AD-12)", () => {
   })
 
   it("onMutate renders the op at once; onSuccess confirms and re-places only that id", async () => {
-    const { queryClient, invalidate, sync, list, cachedNewer, cachedOlder } =
-      setup()
+    const {
+      queryClient,
+      invalidate,
+      sync,
+      list,
+      seeded: [cachedNewer, cachedOlder],
+    } = setup([newer, older])
     const request = deferred<Todo>()
     const { mutation, onFailure } = createKind(() => request.promise)
 
@@ -247,8 +305,13 @@ describe("createTodoMutation (AD-12)", () => {
   })
 
   it("a failure rolls back only that id and calls onFailure exactly once", async () => {
-    const { queryClient, invalidate, sync, list, cachedNewer, cachedOlder } =
-      setup()
+    const {
+      queryClient,
+      invalidate,
+      sync,
+      list,
+      seeded: [cachedNewer, cachedOlder],
+    } = setup([newer, older])
     const error = new Error("boom")
     const { mutation, onFailure } = createKind(() => Promise.reject(error))
 
@@ -269,11 +332,11 @@ describe("createTodoMutation (AD-12)", () => {
   })
 
   it("another Todo's pending create survives this one's failure", async () => {
-    const { queryClient, list } = setup()
-    const other = deferred<Todo>()
+    const { queryClient, list } = setup([newer, older])
+    const otherPost = deferred<Todo>()
     const OTHER_ID = "0199a0b2-3c4d-7e8f-9a0b-000000000098"
     const { mutation } = createKind((vars) =>
-      vars.id === OTHER_ID ? other.promise : Promise.reject(new Error("x"))
+      vars.id === OTHER_ID ? otherPost.promise : Promise.reject(new Error("x"))
     )
 
     const otherDone = mutation.mutate(queryClient, {
@@ -287,12 +350,12 @@ describe("createTodoMutation (AD-12)", () => {
       "newer",
       "older",
     ])
-    other.resolve(makeTodo({ id: OTHER_ID, description: "stays" }))
+    otherPost.resolve(makeTodo({ id: OTHER_ID, description: "stays" }))
     await otherDone
   })
 
   it("drops a queued op after an earlier failure: no fetch, no second onFailure", async () => {
-    const { queryClient, sync, list } = setup()
+    const { queryClient, sync, list } = setup([newer, older])
     const first = deferred<Todo>()
     const { mutation: create, onFailure } = createKind(() => first.promise)
     const secondRequest = vi.fn(async () => makeTodo({ id: NEW_ID }))
@@ -332,7 +395,7 @@ describe("createTodoMutation (AD-12)", () => {
   })
 
   it("retry resends the same variables through the same mutation", async () => {
-    const { queryClient, sync, list } = setup()
+    const { queryClient, sync, list } = setup([newer, older])
     const request = vi
       .fn<(vars: Vars) => Promise<Todo>>()
       .mockRejectedValueOnce(new Error("boom"))
@@ -356,62 +419,8 @@ describe("createTodoMutation (AD-12)", () => {
 })
 
 describe("createTodoMutation: toggle kind", () => {
-  const todo = makeTodo({
-    id: "00000000-0000-7000-8000-000000000001",
-    description: "todo",
-    createdAt: "2026-09-24T09:00:00.000Z",
-  })
-  const other = makeTodo({
-    id: "00000000-0000-7000-8000-000000000002",
-    description: "other",
-    createdAt: "2026-09-24T10:00:00.000Z",
-  })
-  const NEW_ID = "0199a0b2-3c4d-7e8f-9a0b-000000000099"
-
-  function deferred<T>() {
-    let resolve!: (value: T) => void
-    let reject!: (error: unknown) => void
-    const promise = new Promise<T>((res, rej) => {
-      resolve = res
-      reject = rej
-    })
-    return { promise, resolve, reject }
-  }
-
-  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
-
-  function setup() {
-    const queryClient = createQueryClient()
-    queryClient.setQueryDefaults(TODOS_QUERY_KEY, { structuralSharing: false })
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
-    const sync = getTodoSync(queryClient)
-    sync.seedFromList([other, todo])
-    queryClient.setQueryData<Todo[]>(TODOS_QUERY_KEY, [other, todo])
-    const list = () => queryClient.getQueryData<Todo[]>(TODOS_QUERY_KEY)!
-    const find = (id: string) => list().find((t) => t.id === id)
-    return { queryClient, invalidate, sync, list, find }
-  }
-
-  interface ToggleVars {
-    id: string
-    completed: boolean
-  }
-
-  function toggleKind(
-    request: (vars: ToggleVars) => Promise<Todo | null>,
-    onFailure = vi.fn()
-  ) {
-    const mutation = createTodoMutation<ToggleVars>("toggle", {
-      op: (vars) => toggleOp(vars.completed),
-      request,
-      failureState: notFoundMeansDeleted,
-      onFailure,
-    })
-    return { mutation, onFailure }
-  }
-
   it("the failure mapping sets confirmed to null on NOT_FOUND, removing the row", async () => {
-    const { queryClient, sync, list, invalidate } = setup()
+    const { queryClient, sync, list, invalidate } = setup([other, todo])
     const { mutation, onFailure } = toggleKind(() =>
       Promise.reject(new HttpError("NOT_FOUND", { status: 404 }))
     )
@@ -427,7 +436,7 @@ describe("createTodoMutation: toggle kind", () => {
   })
 
   it("the failure mapping leaves confirmed unchanged for other errors", async () => {
-    const { queryClient, sync, list, find } = setup()
+    const { queryClient, sync, list, find } = setup([other, todo])
     const { mutation, onFailure } = toggleKind(() =>
       Promise.reject(new HttpError("INTERNAL", { status: 500 }))
     )
@@ -441,7 +450,7 @@ describe("createTodoMutation: toggle kind", () => {
   })
 
   it("double toggle: the second PATCH waits for the first, and the row never flips back", async () => {
-    const { queryClient, sync, list, find } = setup()
+    const { queryClient, sync, list, find } = setup([other, todo])
     const first = deferred<Todo>()
     const second = deferred<Todo>()
     const request = vi
@@ -481,7 +490,7 @@ describe("createTodoMutation: toggle kind", () => {
   })
 
   it("a toggle on a pending create is dropped when the create fails", async () => {
-    const { queryClient, sync, list } = setup()
+    const { queryClient, sync, list } = setup([other, todo])
     const post = deferred<Todo>()
     const createFailure = vi.fn()
     const create = createTodoMutation<{ id: string; description: string }>(
@@ -518,7 +527,7 @@ describe("createTodoMutation: toggle kind", () => {
   })
 
   it("a toggle queued after a failed toggle is dropped: no fetch, no second failure", async () => {
-    const { queryClient, sync, find } = setup()
+    const { queryClient, sync, find } = setup([other, todo])
     const first = deferred<Todo>()
     const request = vi
       .fn<(vars: ToggleVars) => Promise<Todo>>()
@@ -541,75 +550,6 @@ describe("createTodoMutation: toggle kind", () => {
 })
 
 describe("createTodoMutation: delete kind", () => {
-  const todo = makeTodo({
-    id: "00000000-0000-7000-8000-000000000001",
-    description: "todo",
-    createdAt: "2026-09-24T09:00:00.000Z",
-  })
-  const other = makeTodo({
-    id: "00000000-0000-7000-8000-000000000002",
-    description: "other",
-    createdAt: "2026-09-24T10:00:00.000Z",
-  })
-  const NEW_ID = "0199a0b2-3c4d-7e8f-9a0b-000000000099"
-
-  function deferred<T>() {
-    let resolve!: (value: T) => void
-    let reject!: (error: unknown) => void
-    const promise = new Promise<T>((res, rej) => {
-      resolve = res
-      reject = rej
-    })
-    return { promise, resolve, reject }
-  }
-
-  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
-
-  function setup() {
-    const queryClient = createQueryClient()
-    queryClient.setQueryDefaults(TODOS_QUERY_KEY, { structuralSharing: false })
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
-    const sync = getTodoSync(queryClient)
-    sync.seedFromList([other, todo])
-    queryClient.setQueryData<Todo[]>(TODOS_QUERY_KEY, [other, todo])
-    const list = () => queryClient.getQueryData<Todo[]>(TODOS_QUERY_KEY)!
-    const ids = () => list().map((t) => t.id)
-    return { queryClient, invalidate, sync, list, ids }
-  }
-
-  interface DeleteVars {
-    id: string
-  }
-  interface ToggleVars {
-    id: string
-    completed: boolean
-  }
-
-  function deleteKind(
-    request: (vars: DeleteVars) => Promise<Todo | null>,
-    onFailure = vi.fn()
-  ) {
-    const mutation = createTodoMutation<DeleteVars>("delete", {
-      op: deleteOp,
-      request,
-      onFailure,
-    })
-    return { mutation, onFailure }
-  }
-
-  function toggleKind(
-    request: (vars: ToggleVars) => Promise<Todo | null>,
-    onFailure = vi.fn()
-  ) {
-    const mutation = createTodoMutation<ToggleVars>("toggle", {
-      op: (vars) => toggleOp(vars.completed),
-      request,
-      failureState: notFoundMeansDeleted,
-      onFailure,
-    })
-    return { mutation, onFailure }
-  }
-
   it("deleteOp renders null whatever came before", () => {
     expect(deleteOp().kind).toBe("delete")
     expect(deleteOp().apply(todo)).toBeNull()
@@ -617,7 +557,7 @@ describe("createTodoMutation: delete kind", () => {
   })
 
   it("removes the row at once; success confirms null", async () => {
-    const { queryClient, sync, ids, invalidate } = setup()
+    const { queryClient, sync, ids, invalidate } = setup([other, todo])
     const request = deferred<null>()
     const { mutation, onFailure } = deleteKind(() => request.promise)
 
@@ -635,7 +575,7 @@ describe("createTodoMutation: delete kind", () => {
   })
 
   it("a 404 is counted as success: confirmed null, no failure", async () => {
-    const { queryClient, sync, ids } = setup()
+    const { queryClient, sync, ids } = setup([other, todo])
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -661,7 +601,7 @@ describe("createTodoMutation: delete kind", () => {
   })
 
   it("a real failure re-renders the confirmed Todo at its position, once", async () => {
-    const { queryClient, sync, list, ids } = setup()
+    const { queryClient, sync, list, ids } = setup([other, todo])
     const { mutation, onFailure } = deleteKind(() =>
       Promise.reject(new HttpError("INTERNAL", { status: 500 }))
     )
@@ -676,7 +616,7 @@ describe("createTodoMutation: delete kind", () => {
   })
 
   it("delete during a pending toggle: the DELETE waits for the PATCH, the row is removed at once", async () => {
-    const { queryClient, sync, ids } = setup()
+    const { queryClient, sync, ids } = setup([other, todo])
     const patch = deferred<Todo>()
     const patchRequest = vi.fn(() => patch.promise)
     const del = deferred<null>()
@@ -709,7 +649,7 @@ describe("createTodoMutation: delete kind", () => {
   })
 
   it("a delete on a pending create is dropped when the create fails: only the create failure", async () => {
-    const { queryClient, sync, ids } = setup()
+    const { queryClient, sync, ids } = setup([other, todo])
     const post = deferred<Todo>()
     const createFailure = vi.fn()
     const create = createTodoMutation<{ id: string; description: string }>(
@@ -748,7 +688,7 @@ describe("createTodoMutation: delete kind", () => {
   })
 
   it("a toggle queued after a failed delete is dropped: no fetch, no second failure", async () => {
-    const { queryClient, sync, list, ids } = setup()
+    const { queryClient, sync, list, ids } = setup([other, todo])
     const del = deferred<null>()
     const { mutation: remove, onFailure: deleteFailure } = deleteKind(
       () => del.promise
@@ -777,40 +717,6 @@ describe("createTodoMutation: delete kind", () => {
 })
 
 describe("createTodoMutation: edit kind", () => {
-  const todo = makeTodo({
-    id: "00000000-0000-7000-8000-000000000001",
-    description: "todo",
-    createdAt: "2026-09-24T09:00:00.000Z",
-  })
-  const other = makeTodo({
-    id: "00000000-0000-7000-8000-000000000002",
-    description: "other",
-    createdAt: "2026-09-24T10:00:00.000Z",
-  })
-
-  function deferred<T>() {
-    let resolve!: (value: T) => void
-    let reject!: (error: unknown) => void
-    const promise = new Promise<T>((res, rej) => {
-      resolve = res
-      reject = rej
-    })
-    return { promise, resolve, reject }
-  }
-
-  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
-
-  function setup() {
-    const queryClient = createQueryClient()
-    queryClient.setQueryDefaults(TODOS_QUERY_KEY, { structuralSharing: false })
-    const sync = getTodoSync(queryClient)
-    sync.seedFromList([other, todo])
-    queryClient.setQueryData<Todo[]>(TODOS_QUERY_KEY, [other, todo])
-    const list = () => queryClient.getQueryData<Todo[]>(TODOS_QUERY_KEY)!
-    const ids = () => list().map((t) => t.id)
-    return { queryClient, sync, list, ids }
-  }
-
   interface EditVars {
     id: string
     description: string
@@ -829,18 +735,6 @@ describe("createTodoMutation: edit kind", () => {
     return { mutation, onFailure }
   }
 
-  function deleteKind(
-    request: (vars: { id: string }) => Promise<Todo | null>,
-    onFailure = vi.fn()
-  ) {
-    const mutation = createTodoMutation<{ id: string }>("delete", {
-      op: deleteOp,
-      request,
-      onFailure,
-    })
-    return { mutation, onFailure }
-  }
-
   it("editOp sets the Description, keeps every other field, and keeps a missing Todo missing", () => {
     expect(editOp("new").kind).toBe("edit")
     expect(editOp("new").apply(todo)).toEqual({ ...todo, description: "new" })
@@ -848,7 +742,9 @@ describe("createTodoMutation: edit kind", () => {
   })
 
   it("shows the new Description at once in the same position; success confirms the server's Todo", async () => {
-    const { queryClient, sync, list, ids } = setup()
+    const { queryClient, sync, list, ids } = setup([other, todo], {
+      spyInvalidate: false,
+    })
     const patch = deferred<Todo>()
     const { mutation, onFailure } = editKind(() => patch.promise)
 
@@ -873,7 +769,7 @@ describe("createTodoMutation: edit kind", () => {
   })
 
   it("a real failure rolls back to the confirmed Description, once", async () => {
-    const { queryClient, list } = setup()
+    const { queryClient, list } = setup([other, todo], { spyInvalidate: false })
     const { mutation, onFailure } = editKind(() =>
       Promise.reject(new HttpError("INTERNAL", { status: 500 }))
     )
@@ -889,7 +785,9 @@ describe("createTodoMutation: edit kind", () => {
   })
 
   it("a 404 confirms null and removes the row", async () => {
-    const { queryClient, sync, ids } = setup()
+    const { queryClient, sync, ids } = setup([other, todo], {
+      spyInvalidate: false,
+    })
     const { mutation, onFailure } = editKind(() =>
       Promise.reject(new HttpError("NOT_FOUND", { status: 404 }))
     )
@@ -906,7 +804,9 @@ describe("createTodoMutation: edit kind", () => {
   })
 
   it("a 404 with a delete queued: the failure reports the dropped delete and no Todo", async () => {
-    const { queryClient, sync, ids } = setup()
+    const { queryClient, sync, ids } = setup([other, todo], {
+      spyInvalidate: false,
+    })
     const patch = deferred<Todo>()
     const deleteRequest = vi.fn(async () => null)
     const { mutation: edit, onFailure: editFailure } = editKind(
@@ -937,7 +837,9 @@ describe("createTodoMutation: edit kind", () => {
   })
 
   it("delete during a pending edit: the DELETE waits for the PATCH, the row is removed at once", async () => {
-    const { queryClient, sync, ids } = setup()
+    const { queryClient, sync, ids } = setup([other, todo], {
+      spyInvalidate: false,
+    })
     const patch = deferred<Todo>()
     const patchRequest = vi.fn(() => patch.promise)
     const del = deferred<null>()
@@ -971,7 +873,9 @@ describe("createTodoMutation: edit kind", () => {
   })
 
   it("delete during a pending edit that fails: the DELETE is dropped with no fetch, one failure", async () => {
-    const { queryClient, sync, list, ids } = setup()
+    const { queryClient, sync, list, ids } = setup([other, todo], {
+      spyInvalidate: false,
+    })
     const patch = deferred<Todo>()
     const deleteRequest = vi.fn(async () => null)
     const { mutation: edit, onFailure: editFailure } = editKind(
