@@ -1,18 +1,11 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { compareTodos, normalizeDescription, type Todo } from "@todos/shared"
+import type { Todo } from "@todos/shared"
 
 import { useDeleteTodo } from "@/api/hooks/use-delete-todo"
 import { type EditTodoVars, useEditTodo } from "@/api/hooks/use-edit-todo"
 import { useRetryTodos, useTodosQuery } from "@/api/hooks/use-todos-query"
 import { type ToggleTodoVars, useToggleTodo } from "@/api/hooks/use-toggle-todo"
-import { TODOS_QUERY_KEY } from "@/api/query-client"
 import { announce } from "@/lib/announce"
 
 import { AddRow } from "./add-row"
@@ -23,102 +16,19 @@ import {
   showDeleteFailure,
   withDroppedDelete,
 } from "./delete-failure"
-import { registerEditController, showEditFailure } from "./edit-failure"
+import { showEditFailure } from "./edit-failure"
+import { firstCheckbox } from "./list-dom"
 import { EmptyState, LoadErrorState, LoadingState } from "./list-states"
 import { RowEntranceContext } from "./row-entrance"
 import { TodoRow } from "./todo-row"
 import { showToggleFailure } from "./toggle-failure"
-
-/**
- * A deleted row kept only for its exit motion: the Todo as last rendered.
- * Never sync state and never written to the cache.
- */
-interface ExitingRow {
-  readonly todo: Todo
-  /** The list the delete was made from (the cache removal comes after it). */
-  readonly from: readonly Todo[]
-  /** The exit motion has finished. */
-  readonly done: boolean
-}
-
-type ExitingRows = ReadonlyMap<string, ExitingRow>
-
-interface DisplayedRow {
-  readonly todo: Todo
-  readonly exiting: boolean
-}
-
-/**
- * Whether an exiting row's id is back in the list after its removal: the
- * delete failed and the helper re-rendered the confirmed Todo.
- */
-function isRolledBack(
-  row: ExitingRow,
-  list: readonly Todo[],
-  ids: Set<string>
-) {
-  return list !== row.from && ids.has(row.todo.id)
-}
-
-/**
- * The rows to show: the list, plus exiting rows no longer in it, sorted by
- * `compareTodos`. A listed row is exiting only until the cache removes it.
- */
-function displayedRows(list: readonly Todo[], exiting: ExitingRows) {
-  const ids = new Set(list.map((todo) => todo.id))
-  const rows: DisplayedRow[] = list.map((todo) => {
-    const row = exiting.get(todo.id)
-    return { todo, exiting: !!row && !isRolledBack(row, list, ids) }
-  })
-  for (const row of exiting.values()) {
-    if (!ids.has(row.todo.id) && !row.done) {
-      rows.push({ todo: row.todo, exiting: true })
-    }
-  }
-  return rows.sort((a, b) => compareTodos(a.todo, b.todo))
-}
-
-/** Drops exiting rows that are rolled back, or finished and gone. */
-function pruneExiting(list: readonly Todo[], exiting: ExitingRows) {
-  const ids = new Set(list.map((todo) => todo.id))
-  const kept = new Map<string, ExitingRow>()
-  for (const [id, row] of exiting) {
-    if (isRolledBack(row, list, ids)) continue
-    if (row.done && !ids.has(id)) continue
-    kept.set(id, row)
-  }
-  return kept.size === exiting.size ? exiting : kept
-}
-
-/**
- * Where focus goes when the row `id` leaves the list (Story 2.3's rule),
- * from the display order before the removal: the next non-exiting rows,
- * then the previous ones, nearest first. The first one still rendered takes
- * focus; none means the Add input.
- */
-function removalFocusTargets(
-  shown: readonly DisplayedRow[],
-  id: string
-): string[] {
-  const index = shown.findIndex((row) => row.todo.id === id)
-  const live = (row: DisplayedRow) => !row.exiting && row.todo.id !== id
-  return [
-    ...shown.slice(index + 1).filter(live),
-    ...shown.slice(0, Math.max(index, 0)).reverse().filter(live),
-  ].map((row) => row.todo.id)
-}
-
-/** The first target's checkbox still rendered, if any. */
-function firstCheckbox(
-  region: HTMLElement | null,
-  targets: readonly string[]
-): HTMLElement | null {
-  for (const id of targets) {
-    const box = checkboxOf(region, id)
-    if (box) return box
-  }
-  return null
-}
+import { type OpenEdit, useEditMachine } from "./use-edit-machine"
+import {
+  type DisplayedRow,
+  type LatestRender,
+  useExitingRows,
+} from "./use-exiting-rows"
+import { removalFocusTargets, useListFocus } from "./use-list-focus"
 
 // The failure handlers, stable for the hooks: a delete dropped behind a
 // failed toggle or edit reports the delete's outcome instead.
@@ -126,13 +36,6 @@ const onToggleFailure = withDroppedDelete<ToggleTodoVars>(showToggleFailure)
 const onEditFailure = withDroppedDelete<EditTodoVars>(showEditFailure)
 
 const EMPTY: readonly Todo[] = []
-
-/** The one open edit field: its row, its starting text, and whether it takes focus. */
-interface OpenEdit {
-  readonly id: string
-  readonly text: string
-  readonly focus: boolean
-}
 
 /**
  * The Todo List, always in exactly one List State, inside the list region: a
@@ -168,104 +71,33 @@ export function TodoList() {
   const toggle = useToggleTodo(onToggleFailure)
   const deleteTodo = useDeleteTodo(showDeleteFailure)
   const editTodo = useEditTodo(onEditFailure)
-  const regionRef = useRef<HTMLDivElement>(null)
   const listLoaded = useRef(false)
   const list = query.data ?? EMPTY
 
-  const [exiting, setExiting] = useState<ExitingRows>(() => new Map())
-  const [prunedFor, setPrunedFor] = useState(list)
-  if (prunedFor !== list) {
-    setPrunedFor(list)
-    setExiting((current) => pruneExiting(list, current))
-  }
-  const rows = displayedRows(list, exiting)
+  const { rows, markExiting, handleExitDone } = useExitingRows(list)
 
-  const [edit, setEdit] = useState<OpenEdit | null>(null)
-  // An open edit whose row left the list, or started exiting, is closed.
-  if (edit && !rows.some((row) => !row.exiting && row.todo.id === edit.id)) {
-    setEdit(null)
-  }
-  // The open edit, written at once by the handlers (and synced with each
-  // render), so a save or the failure handler never reads a stale one.
-  const openEdit = useRef(edit)
-  // The open field's current text (it reports every change).
-  const draft = useRef("")
-  useLayoutEffect(() => {
-    openEdit.current = edit
-  })
-  const setOpenEdit = useCallback(
-    (next: OpenEdit | null) => {
-      openEdit.current = next
-      if (next) draft.current = next.text
-      setEdit(next)
-    },
-    [setEdit]
-  )
-
-  // The latest render, for the stable delete and removal callbacks (a row's
-  // unmount cleanup still sees the order from before the removal).
-  const latest = useRef({ list, rows })
+  // The latest render, for the stable delete, edit and removal callbacks (a
+  // row's unmount cleanup still sees the order from before the removal).
+  const latest = useRef<LatestRender>({ list, rows })
   useLayoutEffect(() => {
     latest.current = { list, rows }
   })
 
-  // A failed delete's focus restore waits for the restored row to render.
-  const focusRowId = useRef<string | null>(null)
-  // A focused row's removal: the row and its focus targets, resolved after
-  // the commit.
-  const focusRemoval = useRef<{
-    row: HTMLElement
-    targets: string[]
-  } | null>(null)
-  const [, setFocusRequest] = useState(0)
+  const { regionRef, handleFocusedRemoval, requestRowFocus } = useListFocus({
+    latest,
+    queryClient,
+  })
   useEffect(
     () =>
       registerDeleteFocusController({
-        focusRow: (id) => {
-          focusRowId.current = id
-          setFocusRequest((n) => n + 1)
-        },
+        focusRow: requestRowFocus,
         resendDelete: (id) => deleteTodo({ id }),
       }),
-    [deleteTodo]
+    [deleteTodo, requestRowFocus]
   )
-  useLayoutEffect(() => {
-    const removal = focusRemoval.current
-    focusRemoval.current = null
-    // Only a row really gone (not StrictMode's simulated unmount), and only
-    // while its focus hasn't gone anywhere else.
-    const active = document.activeElement
-    if (
-      removal &&
-      !removal.row.isConnected &&
-      (!active || active === document.body)
-    ) {
-      const box = firstCheckbox(regionRef.current, removal.targets)
-      if (box) box.focus()
-      else focusAddRow()
-    }
-    const id = focusRowId.current
-    if (id === null) return
-    const box = checkboxOf(regionRef.current, id)
-    if (box) {
-      focusRowId.current = null
-      box.focus()
-      return
-    }
-    const cached = queryClient.getQueryData<Todo[]>(TODOS_QUERY_KEY)
-    if (!cached?.some((todo) => todo.id === id)) focusRowId.current = null
-  })
 
-  useEffect(
-    () =>
-      registerEditController({
-        openEditId: () => openEdit.current?.id ?? null,
-        reopen: (id, text, focus) => setOpenEdit({ id, text, focus }),
-        containsFocus: (id) =>
-          !!rowOf(regionRef.current, id)?.contains(document.activeElement),
-      }),
-    [setOpenEdit]
-  )
+  const { edit, closeEdit, handleSaveEdit, handleEdit, handleDraft } =
+    useEditMachine({ rows, latest, regionRef, editTodo })
 
   // Passive effects run after the rows' layout effects, so the rows of the
   // commit that first shows the loaded list still see `false`.
@@ -281,9 +113,7 @@ export function TodoList() {
         removalFocusTargets(shown, todo.id)
       )
 
-      setExiting((current) =>
-        new Map(current).set(todo.id, { todo, from, done: false })
-      )
+      markExiting({ todo, from })
       deleteTodo({ id: todo.id })
 
       if (targetBox) targetBox.focus()
@@ -291,71 +121,8 @@ export function TodoList() {
       recordDeleteFocus(todo.id, document.activeElement)
       announce("Todo deleted")
     },
-    [deleteTodo]
+    [deleteTodo, markExiting, regionRef]
   )
-
-  // A focused, non-exiting row left the list (a `404`, a failed create):
-  // focus moves by the delete rule, after the commit.
-  const handleFocusedRemoval = useCallback((id: string, row: HTMLElement) => {
-    focusRemoval.current = {
-      row,
-      targets: removalFocusTargets(latest.current.rows, id),
-    }
-    setFocusRequest((n) => n + 1)
-  }, [])
-
-  const closeEdit = useCallback(
-    (id: string) => {
-      if (openEdit.current?.id === id) setOpenEdit(null)
-    },
-    [setOpenEdit]
-  )
-
-  const handleSaveEdit = useCallback(
-    (todo: Todo, text: string) => {
-      // Only the open edit saves (a field already committed or closed may
-      // still fire blur as it unmounts). The row focuses Edit after Enter.
-      if (openEdit.current?.id !== todo.id) return
-      setOpenEdit(null)
-      const description = normalizeDescription(text)
-      if (!description || description === todo.description) return
-      editTodo({ id: todo.id, description })
-      announce("Todo updated")
-    },
-    [editTodo, setOpenEdit]
-  )
-
-  const handleEdit = useCallback(
-    (id: string) => {
-      const current = openEdit.current
-      if (current?.id === id) {
-        rowOf(regionRef.current, id)?.querySelector("textarea")?.focus()
-        return
-      }
-      // Commit the open edit as its blur would (it may not have focus).
-      if (current) {
-        const open = latest.current.list.find((t) => t.id === current.id)
-        if (open) handleSaveEdit(open, draft.current)
-        else setOpenEdit(null)
-      }
-      const todo = latest.current.list.find((t) => t.id === id)
-      if (!todo) return
-      setOpenEdit({ id, text: todo.description, focus: true })
-    },
-    [handleSaveEdit, setOpenEdit]
-  )
-
-  const handleDraft = useCallback((text: string) => {
-    draft.current = text
-  }, [])
-
-  const handleExitDone = useCallback((id: string) => {
-    setExiting((current) => {
-      const row = current.get(id)
-      if (!row || row.done) return current
-      return new Map(current).set(id, { ...row, done: true })
-    })
-  }, [])
 
   function handleRetry() {
     regionRef.current?.focus()
@@ -389,25 +156,6 @@ export function TodoList() {
         </RowEntranceContext>
       </div>
     </>
-  )
-}
-
-/** A rendered, non-exiting row. */
-function rowOf(region: HTMLElement | null, id: string): HTMLElement | null {
-  for (const li of region?.querySelectorAll<HTMLElement>("li[data-todo-id]") ??
-    []) {
-    if (li.dataset.todoId === id && !li.hasAttribute("inert")) return li
-  }
-  return null
-}
-
-/** A rendered, non-exiting row's checkbox. */
-function checkboxOf(
-  region: HTMLElement | null,
-  id: string
-): HTMLElement | null {
-  return (
-    rowOf(region, id)?.querySelector<HTMLElement>('[role="checkbox"]') ?? null
   )
 }
 
