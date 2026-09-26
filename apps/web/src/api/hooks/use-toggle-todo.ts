@@ -1,13 +1,10 @@
-import { useCallback, useMemo } from "react"
-import { useQueryClient } from "@tanstack/react-query"
-
 import { updateTodo } from "../http"
 import {
-  createTodoMutation,
   notFoundMeansDeleted,
   toggleOp,
   type TodoMutationFailure,
 } from "../todo-sync"
+import { useTodoMutation, type TodoHookConfig } from "./use-todo-mutation"
 
 /** One toggle: the absolute `completed` to set (never a flip). */
 export interface ToggleTodoVars {
@@ -17,8 +14,15 @@ export interface ToggleTodoVars {
 
 export type ToggleTodoFailure = TodoMutationFailure<ToggleTodoVars>
 
+const TOGGLE_CONFIG: TodoHookConfig<ToggleTodoVars> = {
+  kind: "toggle",
+  op: (vars) => toggleOp(vars.completed),
+  request: (vars) => updateTodo(vars.id, { completed: vars.completed }),
+  failureState: notFoundMeansDeleted,
+}
+
 /**
- * The toggle hook, built on `createTodoMutation("toggle")`: the row shows
+ * The toggle hook, built on `useTodoMutation` (kind `"toggle"`): the row shows
  * the new `completed` at once and `PATCH { completed }` confirms it, in the
  * mutation scope `{ id }` so toggles of one Todo run in order. A `404` maps
  * the Todo to "not on the server" (the row is removed); any other failure
@@ -28,19 +32,5 @@ export type ToggleTodoFailure = TodoMutationFailure<ToggleTodoVars>
 export function useToggleTodo(
   onFailure: (failure: ToggleTodoFailure) => void
 ): (vars: ToggleTodoVars) => void {
-  const queryClient = useQueryClient()
-  const mutation = useMemo(
-    () =>
-      createTodoMutation<ToggleTodoVars>("toggle", {
-        op: (vars) => toggleOp(vars.completed),
-        request: (vars) => updateTodo(vars.id, { completed: vars.completed }),
-        failureState: notFoundMeansDeleted,
-        onFailure,
-      }),
-    [onFailure]
-  )
-  return useCallback(
-    (vars) => void mutation.mutate(queryClient, vars),
-    [mutation, queryClient]
-  )
+  return useTodoMutation(TOGGLE_CONFIG, onFailure)
 }

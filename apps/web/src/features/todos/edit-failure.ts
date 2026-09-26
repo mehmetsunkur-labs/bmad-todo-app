@@ -1,14 +1,10 @@
 import type { EditTodoFailure } from "@/api/hooks/use-edit-todo"
-import { HttpError } from "@/api/http"
+import { isNotFound } from "@/api/http"
 import { announce } from "@/lib/announce"
 import { showErrorToast } from "@/lib/toast"
 
-import {
-  isTooLong,
-  quoteDescription,
-  RETRY_LABEL,
-  TOO_LONG_COPY,
-} from "./create-failure"
+import { isTooLong } from "./create-failure"
+import { quoteDescription, RETRY_LABEL, TOO_LONG_COPY } from "./failure-copy"
 import { focusIsFree } from "./free-focus"
 
 export const EDIT_FAILED_COPY = "Couldn't save your edit. Please try again."
@@ -60,7 +56,7 @@ export function registerEditController(next: EditController): () => void {
  */
 export function showEditFailure({ vars, error, retry }: EditTodoFailure) {
   const tooLong = isTooLong(error)
-  const notFound = error instanceof HttpError && error.kind === "NOT_FOUND"
+  const notFound = isNotFound(error)
   const list = controller
 
   if (list && !notFound && list.openEditId() === null) {

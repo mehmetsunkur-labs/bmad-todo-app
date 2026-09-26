@@ -5,16 +5,11 @@ import { HttpError } from "@/api/http"
 import { announce } from "@/lib/announce"
 import { showErrorToast } from "@/lib/toast"
 
+import { quoteDescription, RETRY_LABEL, TOO_LONG_COPY } from "./failure-copy"
 import { focusIsFree } from "./free-focus"
 
 export const CREATE_RESTORED_COPY =
   "Couldn't add that todo. Your text is back in the box."
-export const TOO_LONG_COPY =
-  "That todo is too long. The limit is 500 characters."
-export const RETRY_LABEL = "Retry"
-
-/** How many characters of a failed Description the Retry toast quotes. */
-export const QUOTE_MAX = 40
 
 /**
  * What the create failure handler needs from the Add row input. The mounted
@@ -46,14 +41,6 @@ export function registerAddRowController(next: AddRowController): () => void {
 /** Focuses the Add row input, if the Add row is mounted. */
 export function focusAddRow(): void {
   controller?.focus()
-}
-
-/** The Description as-is up to 40 characters; otherwise its first 40 and "…". */
-export function quoteDescription(description: string): string {
-  const chars = Array.from(description)
-  return chars.length <= QUOTE_MAX
-    ? description
-    : `${chars.slice(0, QUOTE_MAX).join("")}…`
 }
 
 export function isTooLong(error: unknown): boolean {
