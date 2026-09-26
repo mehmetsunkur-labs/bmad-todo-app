@@ -72,7 +72,7 @@ export function useListFocus({
     ) {
       const box = firstCheckbox(regionRef.current, removal.targets)
       if (box) box.focus()
-      else focusAddRow()
+      else focusAddRow(queryClient)
     }
     const id = focusRowId.current
     if (id === null) return

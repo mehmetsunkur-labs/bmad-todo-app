@@ -89,15 +89,15 @@ export function TodoList() {
   })
   useEffect(
     () =>
-      registerDeleteFocusController({
+      registerDeleteFocusController(queryClient, {
         focusRow: requestRowFocus,
         resendDelete: (id) => deleteTodo({ id }),
       }),
-    [deleteTodo, requestRowFocus]
+    [queryClient, deleteTodo, requestRowFocus]
   )
 
   const { edit, closeEdit, handleSaveEdit, handleEdit, handleDraft } =
-    useEditMachine({ rows, latest, regionRef, editTodo })
+    useEditMachine({ rows, latest, regionRef, editTodo, queryClient })
 
   // Passive effects run after the rows' layout effects, so the rows of the
   // commit that first shows the loaded list still see `false`.
@@ -117,11 +117,11 @@ export function TodoList() {
       deleteTodo({ id: todo.id })
 
       if (targetBox) targetBox.focus()
-      else focusAddRow()
-      recordDeleteFocus(todo.id, document.activeElement)
+      else focusAddRow(queryClient)
+      recordDeleteFocus(queryClient, todo.id, document.activeElement)
       announce("Todo deleted")
     },
-    [deleteTodo, markExiting, regionRef]
+    [deleteTodo, markExiting, regionRef, queryClient]
   )
 
   function handleRetry() {

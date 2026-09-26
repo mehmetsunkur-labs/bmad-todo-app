@@ -196,6 +196,8 @@ export interface TodoMutationFailure<TVars> {
   readonly dropped: readonly TodoWriteKind[]
   /** What the Todo renders as after the rollback (`null` = no row). */
   readonly state: Todo | null
+  /** The QueryClient the write ran against (its app tree's failure UI). */
+  readonly queryClient: QueryClient
 }
 
 export interface TodoMutationConfig<TVars extends { id: string }> {
@@ -308,6 +310,7 @@ export function createTodoMutation<TVars extends { id: string }>(
             retry: () => void mutation.mutate(queryClient, vars),
             dropped,
             state: renderedTodo(sync, id),
+            queryClient,
           })
         },
       }

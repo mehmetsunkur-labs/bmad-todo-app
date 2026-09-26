@@ -1,19 +1,25 @@
+import type { QueryClient } from "@tanstack/react-query"
 import { normalizeDescription } from "@todos/shared"
 
 import type { CreateTodoFailure } from "@/api/hooks/use-create-todo"
 import { HttpError } from "@/api/http"
-import { announce } from "@/lib/announce"
 import { showErrorToast } from "@/lib/toast"
 
-import { quoteDescription, RETRY_LABEL, TOO_LONG_COPY } from "./failure-copy"
-import { focusIsFree } from "./free-focus"
+import { quoteDescription, TOO_LONG_COPY } from "./failure-copy"
+import {
+  getFailureControllers,
+  registerController,
+} from "./failure-controllers"
+import { focusIsFreeOr } from "./free-focus"
+import { showRetryToast } from "./retry-toast"
 
 export const CREATE_RESTORED_COPY =
   "Couldn't add that todo. Your text is back in the box."
 
 /**
  * What the create failure handler needs from the Add row input. The mounted
- * Add row registers one; the handler reads it at the moment of failure.
+ * Add row registers one with its tree's QueryClient; the handler reads that
+ * client's at the moment of failure.
  */
 export interface AddRowController {
   getValue(): string
@@ -28,19 +34,17 @@ export interface AddRowController {
   containsFocus(): boolean
 }
 
-let controller: AddRowController | null = null
-
-/** Registers the Add row; returns the matching unregister. */
-export function registerAddRowController(next: AddRowController): () => void {
-  controller = next
-  return () => {
-    if (controller === next) controller = null
-  }
+/** Registers the Add row of `queryClient`'s tree; returns the unregister. */
+export function registerAddRowController(
+  queryClient: QueryClient,
+  next: AddRowController
+): () => void {
+  return registerController(queryClient, "addRow", next)
 }
 
-/** Focuses the Add row input, if the Add row is mounted. */
-export function focusAddRow(): void {
-  controller?.focus()
+/** Focuses the Add row input of `queryClient`'s tree, if it is mounted. */
+export function focusAddRow(queryClient: QueryClient): void {
+  getFailureControllers(queryClient).addRow?.focus()
 }
 
 export function isTooLong(error: unknown): boolean {
@@ -56,37 +60,34 @@ export function isTooLong(error: unknown): boolean {
  *
  * - Input empty: the sent (normalized) Description goes back into the input
  *   (with its `id`, reused if that text is resubmitted unchanged), focus
- *   moves there only from free focus (`focusIsFree`) or the Add row, and a
+ *   moves there only from free focus (`focusIsFreeOr`) or the Add row, and a
  *   plain toast says so.
  * - Input has text: it is left alone, and a persistent toast quotes the
  *   failed Description with "Retry" (same `id` and Description).
  * - `too_long`: the too-long copy replaces either message.
  */
-export function showCreateFailure({ vars, error, retry }: CreateTodoFailure) {
+export function showCreateFailure({
+  vars,
+  error,
+  retry,
+  queryClient,
+}: CreateTodoFailure) {
   const tooLong = isTooLong(error)
-  const addRow = controller
+  const { addRow } = getFailureControllers(queryClient)
 
   if (addRow && normalizeDescription(addRow.getValue()) === "") {
-    const focusWasFree = focusIsFree()
-    const focusInAddRow = addRow.containsFocus()
+    const focus = focusIsFreeOr(() => addRow.containsFocus())
     addRow.restore(vars.description, vars.id)
-    if (focusWasFree || focusInAddRow) addRow.focus()
+    if (focus) addRow.focus()
     showErrorToast(tooLong ? TOO_LONG_COPY : CREATE_RESTORED_COPY)
     return
   }
 
-  showErrorToast(
+  showRetryToast(
     tooLong
       ? TOO_LONG_COPY
       : `Couldn't add “${quoteDescription(vars.description)}”.`,
-    {
-      action: {
-        label: RETRY_LABEL,
-        onClick: () => {
-          retry()
-          announce("Todo added")
-        },
-      },
-    }
+    retry,
+    "Todo added"
   )
 }

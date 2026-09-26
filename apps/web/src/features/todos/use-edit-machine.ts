@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react"
+import type { QueryClient } from "@tanstack/react-query"
 import { normalizeDescription, type Todo } from "@todos/shared"
 
 import type { useEditTodo } from "@/api/hooks/use-edit-todo"
@@ -37,11 +38,14 @@ export function useEditMachine({
   latest,
   regionRef,
   editTodo,
+  queryClient,
 }: {
   rows: readonly DisplayedRow[]
   latest: RefObject<LatestRender>
   regionRef: RefObject<HTMLElement | null>
   editTodo: ReturnType<typeof useEditTodo>
+  /** The list's QueryClient, whose failure controllers get the edit one. */
+  queryClient: QueryClient
 }) {
   const [edit, setEdit] = useState<OpenEdit | null>(null)
   // An open edit whose row left the list, or started exiting, is closed.
@@ -67,13 +71,13 @@ export function useEditMachine({
 
   useEffect(
     () =>
-      registerEditController({
+      registerEditController(queryClient, {
         openEditId: () => openEdit.current?.id ?? null,
         reopen: (id, text, focus) => setOpenEdit({ id, text, focus }),
         containsFocus: (id) =>
           !!rowOf(regionRef.current, id)?.contains(document.activeElement),
       }),
-    [setOpenEdit, regionRef]
+    [queryClient, setOpenEdit, regionRef]
   )
 
   const closeEdit = useCallback(

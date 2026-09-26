@@ -15,3 +15,14 @@ export function focusIsFree(): boolean {
     active.hasAttribute(FOCUS_FREE_ATTRIBUTE)
   )
 }
+
+/**
+ * Whether a failure handler may move focus: focus is free (`focusIsFree`),
+ * or `check` says it is where the handler's own UI holds it. Both are read
+ * now, before the handler changes anything.
+ */
+export function focusIsFreeOr(check: () => boolean): boolean {
+  const free = focusIsFree()
+  const own = check()
+  return free || own
+}

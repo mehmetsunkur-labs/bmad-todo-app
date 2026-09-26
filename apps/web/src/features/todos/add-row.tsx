@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { v7 as uuidv7 } from "uuid"
 import { DESCRIPTION_MAX, normalizeDescription } from "@todos/shared"
 
@@ -49,10 +50,11 @@ export function AddRow({
   const restoredRef = useRef<{ id: string; description: string } | null>(null)
   const disabled = status !== "success"
   const createTodo = useCreateTodo(onCreateFailure)
+  const queryClient = useQueryClient()
 
   useEffect(
     () =>
-      registerAddRowController({
+      registerAddRowController(queryClient, {
         getValue: () => valueRef.current,
         restore: (description, id) => {
           restoredRef.current = { id, description }
@@ -63,7 +65,7 @@ export function AddRow({
         containsFocus: () =>
           !!formRef.current?.contains(document.activeElement),
       }),
-    []
+    [queryClient]
   )
 
   useEffect(() => {

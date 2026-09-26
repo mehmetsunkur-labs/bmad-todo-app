@@ -1,14 +1,21 @@
+import type { QueryClient } from "@tanstack/react-query"
+
 import type { DeleteTodoFailure } from "@/api/hooks/use-delete-todo"
 import type { TodoMutationFailure } from "@/api/todo-sync"
 import { showErrorToast } from "@/lib/toast"
 
-import { focusIsFree } from "./free-focus"
+import {
+  getFailureControllers,
+  registerController,
+} from "./failure-controllers"
+import { focusIsFreeOr } from "./free-focus"
 
 export const DELETE_FAILED_COPY = "Couldn't delete that todo. Please try again."
 
 /**
  * What the delete failure handler needs from the Todo List. The mounted list
- * registers one; the handler reads it at the moment of failure.
+ * registers one with its tree's QueryClient; the handler reads that client's
+ * at the moment of failure.
  */
 export interface DeleteFocusController {
   /** Focuses the restored row's checkbox once it is back in the list. */
@@ -20,44 +27,48 @@ export interface DeleteFocusController {
   resendDelete(id: string): void
 }
 
-let controller: DeleteFocusController | null = null
-
-/** Registers the Todo List; returns the matching unregister. */
+/** Registers the Todo List of `queryClient`'s tree; returns the unregister. */
 export function registerDeleteFocusController(
+  queryClient: QueryClient,
   next: DeleteFocusController
 ): () => void {
-  controller = next
-  return () => {
-    if (controller === next) controller = null
-  }
+  return registerController(queryClient, "deleteFocus", next)
 }
 
-/** Per deleted id: the element the delete moved focus to. */
-const movedFocus = new Map<string, Element | null>()
-
-/** Records where a delete moved focus, for the failure restore rule. */
-export function recordDeleteFocus(id: string, element: Element | null): void {
-  movedFocus.set(id, element)
+/**
+ * Records where a delete in `queryClient`'s tree moved focus, for the
+ * failure restore rule.
+ */
+export function recordDeleteFocus(
+  queryClient: QueryClient,
+  id: string,
+  element: Element | null
+): void {
+  getFailureControllers(queryClient).movedFocus.set(id, element)
 }
 
 /**
  * The delete failure UI for `id` (the row is already back at its
  * `compareTodos` position with its confirmed state). One plain toast; the
  * API's `message` is never shown. If focus is still where the delete moved
- * it (or free, see `focusIsFree`), it goes to the restored row's checkbox;
+ * it (or free, see `focusIsFreeOr`), it goes to the restored row's checkbox;
  * otherwise it stays put.
  */
-function deleteFailed(id: string): void {
+function deleteFailed(queryClient: QueryClient, id: string): void {
+  const { movedFocus, deleteFocus } = getFailureControllers(queryClient)
   const moved = movedFocus.get(id)
   movedFocus.delete(id)
-  const focusStillMoved = !!moved && document.activeElement === moved
-  if (focusIsFree() || focusStillMoved) controller?.focusRow(id)
+  const focus = focusIsFreeOr(() => !!moved && document.activeElement === moved)
+  if (focus) deleteFocus?.focusRow(id)
   showErrorToast(DELETE_FAILED_COPY)
 }
 
 /** The delete kind's failure handler. */
-export function showDeleteFailure({ vars }: DeleteTodoFailure): void {
-  deleteFailed(vars.id)
+export function showDeleteFailure({
+  vars,
+  queryClient,
+}: DeleteTodoFailure): void {
+  deleteFailed(queryClient, vars.id)
 }
 
 /**
@@ -85,12 +96,14 @@ export function withDroppedDelete<TVars extends { id: string }>(
       handler(failure)
       return
     }
-    const { id } = failure.vars
+    const { vars, queryClient } = failure
+    const { id } = vars
     if (failure.state === null) {
-      movedFocus.delete(id)
-      if (resend) controller?.resendDelete(id)
+      const controllers = getFailureControllers(queryClient)
+      controllers.movedFocus.delete(id)
+      if (resend) controllers.deleteFocus?.resendDelete(id)
       return
     }
-    deleteFailed(id)
+    deleteFailed(queryClient, id)
   }
 }

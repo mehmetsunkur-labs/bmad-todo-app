@@ -1,11 +1,17 @@
+import type { QueryClient } from "@tanstack/react-query"
+
 import type { EditTodoFailure } from "@/api/hooks/use-edit-todo"
 import { isNotFound } from "@/api/http"
-import { announce } from "@/lib/announce"
 import { showErrorToast } from "@/lib/toast"
 
 import { isTooLong } from "./create-failure"
-import { quoteDescription, RETRY_LABEL, TOO_LONG_COPY } from "./failure-copy"
-import { focusIsFree } from "./free-focus"
+import { quoteDescription, TOO_LONG_COPY } from "./failure-copy"
+import {
+  getFailureControllers,
+  registerController,
+} from "./failure-controllers"
+import { focusIsFreeOr } from "./free-focus"
+import { showRetryToast } from "./retry-toast"
 
 export const EDIT_FAILED_COPY = "Couldn't save your edit. Please try again."
 
@@ -16,7 +22,8 @@ export function editFailedToOtherCopy(description: string): string {
 
 /**
  * What the edit failure handler needs from the Todo List. The mounted list
- * registers one; the handler reads it at the moment of failure.
+ * registers one with its tree's QueryClient; the handler reads that client's
+ * at the moment of failure.
  */
 export interface EditController {
   /** The id of the row whose edit field is open, if any (one per list). */
@@ -30,14 +37,12 @@ export interface EditController {
   containsFocus(id: string): boolean
 }
 
-let controller: EditController | null = null
-
-/** Registers the Todo List; returns the matching unregister. */
-export function registerEditController(next: EditController): () => void {
-  controller = next
-  return () => {
-    if (controller === next) controller = null
-  }
+/** Registers the Todo List of `queryClient`'s tree; returns the unregister. */
+export function registerEditController(
+  queryClient: QueryClient,
+  next: EditController
+): () => void {
+  return registerController(queryClient, "edit", next)
 }
 
 /**
@@ -46,7 +51,7 @@ export function registerEditController(next: EditController): () => void {
  * never shown.
  *
  * - No edit open (and not a `404`): the row reopens its edit field with the
- *   sent text, focused only if focus was free (see `focusIsFree`) or inside
+ *   sent text, focused only if focus was free (see `focusIsFreeOr`) or inside
  *   that row, and a plain toast says so.
  * - Another edit open (or this row's own edit reopened), or a `404`: the
  *   text being typed is never touched; a persistent toast quotes the sent
@@ -54,28 +59,26 @@ export function registerEditController(next: EditController): () => void {
  *   "Todo updated".
  * - `too_long`: the too-long copy replaces either message.
  */
-export function showEditFailure({ vars, error, retry }: EditTodoFailure) {
+export function showEditFailure({
+  vars,
+  error,
+  retry,
+  queryClient,
+}: EditTodoFailure) {
   const tooLong = isTooLong(error)
   const notFound = isNotFound(error)
-  const list = controller
+  const list = getFailureControllers(queryClient).edit
 
   if (list && !notFound && list.openEditId() === null) {
-    const focus = focusIsFree() || list.containsFocus(vars.id)
+    const focus = focusIsFreeOr(() => list.containsFocus(vars.id))
     list.reopen(vars.id, vars.description, focus)
     showErrorToast(tooLong ? TOO_LONG_COPY : EDIT_FAILED_COPY)
     return
   }
 
-  showErrorToast(
+  showRetryToast(
     tooLong ? TOO_LONG_COPY : editFailedToOtherCopy(vars.description),
-    {
-      action: {
-        label: RETRY_LABEL,
-        onClick: () => {
-          retry()
-          announce("Todo updated")
-        },
-      },
-    }
+    retry,
+    "Todo updated"
   )
 }
