@@ -1,12 +1,6 @@
-import { useCallback, useMemo } from "react"
-import { useQueryClient } from "@tanstack/react-query"
-
 import { createTodo } from "../http"
-import {
-  createOp,
-  createTodoMutation,
-  type TodoMutationFailure,
-} from "../todo-sync"
+import { createOp, type TodoMutationFailure } from "../todo-sync"
+import { useTodoMutation, type TodoHookConfig } from "./use-todo-mutation"
 
 /** One create: a client-generated UUIDv7 and the normalized Description. */
 export interface CreateTodoVars {
@@ -16,8 +10,14 @@ export interface CreateTodoVars {
 
 export type CreateTodoFailure = TodoMutationFailure<CreateTodoVars>
 
+const CREATE_CONFIG: TodoHookConfig<CreateTodoVars> = {
+  kind: "create",
+  op: (vars) => createOp(vars.id, vars.description),
+  request: (vars) => createTodo({ id: vars.id, description: vars.description }),
+}
+
 /**
- * The create hook, built on `createTodoMutation("create")`. The row appears
+ * The create hook, built on `useTodoMutation` (kind `"create"`). The row appears
  * at once (optimistic, provisional client time) and is confirmed or rolled
  * back by the AD-12 helper. `onFailure` is feature-owned UI (the toast and
  * the Add row text) and runs exactly once per real failure; its `retry`
@@ -26,19 +26,5 @@ export type CreateTodoFailure = TodoMutationFailure<CreateTodoVars>
 export function useCreateTodo(
   onFailure: (failure: CreateTodoFailure) => void
 ): (vars: CreateTodoVars) => void {
-  const queryClient = useQueryClient()
-  const mutation = useMemo(
-    () =>
-      createTodoMutation<CreateTodoVars>("create", {
-        op: (vars) => createOp(vars.id, vars.description),
-        request: (vars) =>
-          createTodo({ id: vars.id, description: vars.description }),
-        onFailure,
-      }),
-    [onFailure]
-  )
-  return useCallback(
-    (vars) => void mutation.mutate(queryClient, vars),
-    [mutation, queryClient]
-  )
+  return useTodoMutation(CREATE_CONFIG, onFailure)
 }

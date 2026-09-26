@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-24-2026 16:33
-last_updated: 09-26-2026 09:39
+last_updated: 09-26-2026 11:43
 project: Todo-App
 project_key: NOKEY
 tracking_system: file-system
@@ -150,7 +150,7 @@ action_items:
       into hooks, one useTodoMutation factory, route 404-as-deleted via failureState,
       neutral copy module, shared web test helpers (F5, F6, F7)"
     owner: "Dev"
-    status: in-progress
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md"
   - id: "epic-2-retro-item-14-apply-epic-2-spec-reconciliations-f9-1-f"
     epic: 2

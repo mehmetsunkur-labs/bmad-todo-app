@@ -5,7 +5,7 @@ import {
 } from "@tanstack/react-query"
 import { compareTodos, type Todo } from "@todos/shared"
 
-import { HttpError } from "./http"
+import { isNotFound } from "./http"
 import { TODOS_QUERY_KEY } from "./query-client"
 
 /** Every kind of write to one Todo (AD-12). */
@@ -219,9 +219,7 @@ export interface TodoMutationConfig<TVars extends { id: string }> {
  * `confirmed` as it was.
  */
 export function notFoundMeansDeleted(error: unknown): null | undefined {
-  return error instanceof HttpError && error.kind === "NOT_FOUND"
-    ? null
-    : undefined
+  return isNotFound(error) ? null : undefined
 }
 
 export interface TodoMutation<TVars extends { id: string }> {

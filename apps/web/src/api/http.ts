@@ -38,6 +38,15 @@ export class HttpError extends Error {
   }
 }
 
+/**
+ * Whether `error` is an `HttpError` of kind `NOT_FOUND`. Each caller
+ * decides what that means (the PATCH failure mapping, the delete-as-success
+ * rule, the edit failure copy); only this check is shared.
+ */
+export function isNotFound(error: unknown): error is HttpError {
+  return error instanceof HttpError && error.kind === "NOT_FOUND"
+}
+
 /** The part of a shared Zod schema that `request` needs. */
 interface ResponseSchema<T> {
   safeParse(
