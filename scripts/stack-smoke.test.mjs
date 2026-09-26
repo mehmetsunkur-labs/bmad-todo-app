@@ -6,7 +6,8 @@
 // touched, and drives it through nginx on the host's LAN address, as a phone
 // on the same network would. Then boots the dev stack (`compose.yaml` +
 // `compose.override.yaml` + `scripts/compose.smoke-dev.yaml`) in its own
-// project (`todos-smoke-dev`), checks the API through Vite's proxy, and checks
+// project (`todos-smoke-dev`), on loopback as the dev default, checks the API
+// through Vite's proxy and Vite's DEV_ALLOWED_HOSTS host check, and checks
 // that the README's dev refresh replaces stale node_modules. Needs
 // Docker, so it is not part of `pnpm test`.
 //
@@ -28,6 +29,7 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
+import { request as httpRequest } from "node:http"
 import { createServer } from "node:net"
 import { networkInterfaces } from "node:os"
 import { dirname, resolve } from "node:path"
@@ -62,6 +64,8 @@ const ENV = { ...process.env, WEB_PORT, TODOS_IMAGE_TAG: IMAGE_TAG }
 
 const DEV_PROJECT = "todos-smoke-dev"
 const DEV_IMAGE_TAG = "smoke-dev"
+/** The extra Vite host name the dev check allows (DEV_ALLOWED_HOSTS). */
+const DEV_ALLOWED_HOST = "smoke.example"
 const DEV_FILES = [
   "-f",
   "compose.yaml",
@@ -447,6 +451,52 @@ describe(`production-like stack (${BASE})`, { concurrency: 1 }, () => {
     assert.deepEqual(Object.keys(dev.volumes ?? {}), ["todos-data"])
   })
 
+  it("dev web binds loopback unless DEV_WEB_HOST opts in; prod binds all interfaces", async () => {
+    // Explicit empties win over the owner's `.env` (`:-` treats "" as unset).
+    const base = { ...ENV, DEV_WEB_HOST: "", DEV_ALLOWED_HOSTS: "" }
+    /**
+     * The resolved `web` service (dev files by default).
+     * @param {NodeJS.ProcessEnv} env
+     * @param {string[]} [files]
+     * @returns {Promise<any>}
+     */
+    const webOf = async (env, files = []) =>
+      JSON.parse(await compose(["config", "--format", "json"], { files, env }))
+        .services.web
+    /**
+     * Asserts `web` publishes only WEB_PORT -> 8080 and returns that port.
+     * @param {any} web
+     * @returns {{ host_ip?: string }}
+     */
+    const onlyPort = (web) => {
+      assert.equal(web.ports.length, 1, "web publishes one port")
+      assert.equal(String(web.ports[0].target), "8080")
+      assert.equal(String(web.ports[0].published), WEB_PORT)
+      return web.ports[0]
+    }
+
+    const devDefault = await webOf(base)
+    assert.equal(onlyPort(devDefault).host_ip, "127.0.0.1", "dev default")
+    assert.equal(devDefault.environment.DEV_ALLOWED_HOSTS, "")
+
+    const devLan = await webOf({ ...base, DEV_WEB_HOST: "0.0.0.0" })
+    const lanIp = onlyPort(devLan).host_ip
+    assert.ok(!lanIp || lanIp === "0.0.0.0", `dev opt-in host_ip ${lanIp}`)
+
+    const hosts = await webOf({
+      ...base,
+      DEV_ALLOWED_HOSTS: "a.example,b.example",
+    })
+    assert.equal(hosts.environment.DEV_ALLOWED_HOSTS, "a.example,b.example")
+
+    // The opt-in never reaches the production-like stack.
+    for (const env of [base, { ...base, DEV_WEB_HOST: "127.0.0.1" }]) {
+      const prod = await webOf(env, ["-f", "compose.yaml"])
+      assert.ok(!onlyPort(prod).host_ip, "prod web binds all interfaces")
+      assert.equal(prod.environment?.DEV_ALLOWED_HOSTS, undefined)
+    }
+  })
+
   /** @type {string} */
   let indexHtml = ""
   it("GET / serves the built index.html", async () => {
@@ -772,7 +822,15 @@ describe(
     before(
       async () => {
         devPort = String(await firstFreePort(18180, [WEB_PORT]))
-        devEnv = { ...ENV, WEB_PORT: devPort, TODOS_IMAGE_TAG: DEV_IMAGE_TAG }
+        devEnv = {
+          ...ENV,
+          WEB_PORT: devPort,
+          TODOS_IMAGE_TAG: DEV_IMAGE_TAG,
+          // Loopback (the dev default) and one extra Vite host, whatever the
+          // owner's `.env` says.
+          DEV_WEB_HOST: "",
+          DEV_ALLOWED_HOSTS: DEV_ALLOWED_HOST,
+        }
         // 120 s + 720 s, inside the hook's 900 s.
         await devCompose(["down", "-v"], 120_000).catch(() => undefined)
         await devCompose(["up", "-d", "--build", "--wait"], 720_000)
@@ -814,6 +872,33 @@ describe(
       }
     }
 
+    /**
+     * The status of `GET /` from the dev web port with a given Host header
+     * (fetch can't set Host, so plain node:http).
+     * @param {string} host
+     * @returns {Promise<number | undefined>}
+     */
+    function devStatusFor(host) {
+      return new Promise((done, fail) => {
+        const req = httpRequest(
+          {
+            host: "127.0.0.1",
+            port: Number(devPort),
+            path: "/",
+            headers: { Host: `${host}:${devPort}` },
+            timeout: 15_000,
+          },
+          (res) => {
+            res.resume()
+            done(res.statusCode)
+          }
+        )
+        req.on("timeout", () => req.destroy(new Error("timed out")))
+        req.on("error", fail)
+        req.end()
+      })
+    }
+
     it("config: :smoke-dev images, only web publishes a port", async () => {
       const cfg = JSON.parse(await devCompose(["config", "--format", "json"]))
       assert.equal(cfg.services.api.image, `todos-api:${DEV_IMAGE_TAG}`)
@@ -822,8 +907,26 @@ describe(
       for (const name of ["db", "api"]) {
         assert.equal(cfg.services[name].ports, undefined, `${name} ports`)
       }
+      assert.equal(cfg.services.web.ports.length, 1)
       assert.equal(String(cfg.services.web.ports[0].published), devPort)
+      assert.equal(cfg.services.web.ports[0].host_ip, "127.0.0.1")
+      assert.equal(
+        cfg.services.web.environment.DEV_ALLOWED_HOSTS,
+        DEV_ALLOWED_HOST
+      )
     })
+
+    it(
+      "Vite accepts the DEV_ALLOWED_HOSTS name and IPs, and rejects other host names",
+      { timeout: 240_000 },
+      async () => {
+        await devGet200("/api/v1/health") // Vite is up.
+        assert.equal(await devStatusFor(DEV_ALLOWED_HOST), 200, "allowed")
+        // Opening the dev server by LAN IP (the README's phone path).
+        assert.equal(await devStatusFor("192.0.2.10"), 200, "IPv4 literal")
+        assert.equal(await devStatusFor("other.example"), 403, "other host")
+      }
+    )
 
     it(
       "GET /api/v1/health returns 200 through Vite's proxy",

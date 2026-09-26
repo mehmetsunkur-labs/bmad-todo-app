@@ -19,8 +19,8 @@ colors:
   ring: '#2F6F6A'
   ring-dark: '#5FB3AA'
 typography:
-  # Body, label and small text use shadcn's default sans stack: as built, Geist Variable
-  # (@fontsource-variable/geist). The final font choice is open (deferred-work.md, G-12).
+  # Body, label and small text use shadcn's default sans stack: Geist Variable
+  # (@fontsource-variable/geist), the final font (decided 2026-09-26, G-12 in deferred-work.md).
   # Only the roles Todos needs are named here.
   app-title:
     fontSize: 24px
@@ -141,7 +141,7 @@ Avoid gradients, colored surfaces, color-coding by state beyond the checked Comp
 
 ## Typography
 
-Todos uses shadcn's default sans stack (as built, Geist Variable, shadcn's current preset; the mockup renders the system UI stack, and which one is final is an open decision, G-12 in `deferred-work.md`), with four named roles:
+Todos uses shadcn's default sans stack, Geist Variable (shadcn's current preset). Geist is the final font (decided 2026-09-26, G-12 in `deferred-work.md`); the mockup's system UI stack is superseded. It has four named roles:
 
 - **`app-title`** (24px, 600): the product name "Todos", left-aligned in the App header, once per page.
 - **`todo-description`** (16px, 400, line height 1.5): every Todo Description, the Add row input, and the Inline edit field. At 16px, iOS Safari does not zoom the page when an input is focused.
@@ -182,7 +182,7 @@ Todos-specific components and brand-layer overrides:
 - **Completion checkbox:** shadcn `Checkbox` with a 16px visual size, centered in a `{spacing.touch-target}` hit area that overlaps the row padding. The hit area is pulled 14px left, so the box lines up with the Add row input's left edge. It has a 16px right margin, so the open Inline edit field (pulled left by its own padding) never covers it, and the Description starts 50px in. The Row actions are pulled 12px right, so the Delete icon ends near the column's edge. Where the mock places the Description closer (34px), the 44×44 hit area wins. When checked, it is filled with `{colors.primary}` and shows a `{colors.primary-foreground}` check mark.
 - **Completed Todo row:** the Completion checkbox is checked, and the Description uses line-through and `muted-foreground`. With three cues, status never relies on color alone. The row keeps its place in the list.
 - **Row actions (Edit button, Delete button):** ghost `Button`s with a `{spacing.touch-target}` hit area, showing lucide `Pencil` and `Trash2` icons at 16px in `muted-foreground`. On hover or `focus-visible`, the Edit button turns `foreground` and the Delete button turns `destructive`.
-- **Inline edit field:** an auto-growing `Textarea` that replaces the Description text in place, in `todo-description` style, with its text starting at the same left edge as the Description. While editing, the Created At time and the Row actions stay visible. A character counter (same spec as in the Add row) sits under the field. Its line is always reserved while the field is open, and it is visible from 450 characters. With the field's own padding, this makes the row about 22px taller while editing. Whether to keep that shift is an open decision (G-13 in `deferred-work.md`).
+- **Inline edit field:** an auto-growing `Textarea` that replaces the Description text in place, in `todo-description` style, with its text starting at the same left edge as the Description. While editing, the Created At time and the Row actions stay visible. A character counter (same spec as in the Add row) sits under the field. Its line is always reserved while the field is open, and it is visible from 450 characters. With the field's own padding, this makes the row about 22px taller once, when editing starts. That is intended (decided 2026-09-26, G-13 in `deferred-work.md`): reserving the line up front means the counter appearing at 450 characters causes no layout jump (NFR-12).
 - **Created At time:** in `meta` style. It shows a relative time by default, and switches to the full date and time while anything in its row has focus (see EXPERIENCE.md).
 - **Empty state:** a centered block in the list area. It has an `empty-title` headline and one line of 14px body text (Tailwind `text-sm`) in `muted-foreground`. No illustration `[ASSUMPTION: no illustration, to stay calm and minimal]`.
 - **Load error state:** the same layout as the Empty state, plus a secondary `Button` labeled "Try again".
