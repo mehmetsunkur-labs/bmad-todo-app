@@ -35,3 +35,11 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-1-update-and-delete-todos-through-the-api.md`
   summary: Extend `packages/shared/fixtures/wire-contract.ts` to PATCH and DELETE (success, `404`, validation and the `204`-with-no-body case), so the API contract test and the web `http.contract.test.ts` pair those server bodies with the client parser as they already do for POST.
   evidence: `spec-2-1-…md:88` (triage: "extend it there", Stories 2.2/2.3) and `:142` (residuals). `packages/shared/fixtures/wire-contract.ts:17` is still `method: "POST"`. Epic 2 retro F4 and item 4. Epic 3 retro action-item table, `epic-2-retro-item-12` ("The PATCH/DELETE wire-contract fixture … aren't in `deferred-work.md`").
+- source_spec: none
+  summary: Consolidate the web write path (Epic 2 retro F6, the rest of item 13). One `useTodoMutation` factory for the create, toggle, delete and edit hooks; "404 means deleted" in one place (`todo-sync.ts` `notFoundMeansDeleted` and `use-delete-todo.ts` `deleteTodoRequest`); a neutral copy module for `TOO_LONG_COPY`, `RETRY_LABEL` and `quoteDescription`; the 4 module-level failure controllers made per-QueryClient instead of last-registered-wins.
+  evidence: Split from the TodoList refactor on 2026-09-26 (owner chose to do F5 first). `epic-2-retro-2026-09-25.md` F6 lists the duplicated hooks, the two 404 paths, the ×3 controller register/unregister and `focusWasFree` copies, and the singletons at `create-failure.ts:34`, `delete-failure.ts:15,28` and `edit-failure.ts:36`.
+  owner: Dev
+- source_spec: none
+  summary: Move the duplicated web test helpers into `apps/web/src/test/*` (Epic 2 retro F7, the rest of item 13). This covers `renderPopulated`, `toasts`, `announcer`, `rows`, `checkbox`, `serverError`, `notFound`, `callsWith`, the `deferredFetch` wrapper, the fixtures, and one `stubAnimate`, plus the 4 copies of `deferred()` and `setup()` in `todo-sync.test.ts`.
+  evidence: Split from the TodoList refactor on 2026-09-26. `epic-2-retro-2026-09-25.md` F7 lists the helpers redefined in `todo-row`, `todo-delete`, `todo-edit` and `add-row.test.tsx`, and the two differing `stubAnimate`s (`add-row.test.tsx:794`, `todo-delete.test.tsx:523`).
+  owner: Dev
