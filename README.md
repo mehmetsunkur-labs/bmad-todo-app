@@ -1,7 +1,13 @@
 # Todos
 
+[![CI](https://github.com/mehmetsunkur-labs/bmad-todo-app/actions/workflows/ci.yml/badge.svg)](https://github.com/mehmetsunkur-labs/bmad-todo-app/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Built with BMad Method v6.12](https://img.shields.io/badge/built%20with-BMad%20Method%20v6.12-6f42c1)](https://github.com/bmad-code-org/BMAD-METHOD)
+[![AI-assisted: Claude Code](https://img.shields.io/badge/AI--assisted-Claude%20Code-d97757)](https://claude.com/claude-code)
+
 A single shared Todo list: a React SPA, a Fastify API and PostgreSQL, run with Docker Compose. Changes show instantly (optimistic updates) and roll back with a toast if the server refuses them.
 
+- [How this was built](#how-this-was-built)
 - [Prerequisites](#prerequisites)
 - [Run the dev stack](#run-the-dev-stack)
 - [Tests and lint](#tests-and-lint)
@@ -16,6 +22,23 @@ A single shared Todo list: a React SPA, a Fastify API and PostgreSQL, run with D
 
 > [!WARNING]
 > **`docker compose down -v` permanently deletes all Todos.** The `-v` flag removes the `todos-data` volume, which holds the database. There is no backup. To stop the app, use `docker compose down` (no `-v`) or `docker compose stop`.
+
+## How this was built
+
+This repository is an experiment in AI-assisted development: the whole app was planned, built, reviewed and retrospected with [BMad Method](https://github.com/bmad-code-org/BMAD-METHOD) v6.12 skills running in Claude Code, and every artifact that process produced is committed under [`_bmad-output/`](_bmad-output/). I set direction, answered the agents' questions and made the calls; the agents drafted, implemented and reviewed. Reading the artifacts in order shows how an idea became working, tested code:
+
+| Step               | What happened                                                                     | Artifacts                                                                                                                                                                                                                                                                                                   |
+| ------------------ | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Brief              | A one-page product brief, the only hand-written input                             | [input-original-brief.md](_bmad-output/planning-artifacts/prds/prd-Todo-App-2026-09-24/input-original-brief.md)                                                                                                                                                                                             |
+| PRD                | Requirements drafted from the brief, then rubric- and polish-reviewed             | [prd.md](_bmad-output/planning-artifacts/prds/prd-Todo-App-2026-09-24/prd.md), [reviews](_bmad-output/planning-artifacts/prds/prd-Todo-App-2026-09-24/)                                                                                                                                                     |
+| UX                 | Look and behaviour specs, with an HTML mockup                                     | [DESIGN.md](_bmad-output/planning-artifacts/ux-designs/ux-Todo-App-2026-09-24/DESIGN.md), [EXPERIENCE.md](_bmad-output/planning-artifacts/ux-designs/ux-Todo-App-2026-09-24/EXPERIENCE.md), [mockup](_bmad-output/planning-artifacts/ux-designs/ux-Todo-App-2026-09-24/mockups/todo-list.html)              |
+| Architecture       | The decisions that keep the parts consistent, challenged by an adversarial review | [ARCHITECTURE-SPINE.md](_bmad-output/planning-artifacts/architecture/architecture-Todo-App-2026-09-24/ARCHITECTURE-SPINE.md), [reviews](_bmad-output/planning-artifacts/architecture/architecture-Todo-App-2026-09-24/reviews/)                                                                             |
+| Spec and plan      | A condensed spec, three epics of four stories each, and a sprint status file      | [SPEC.md](_bmad-output/specs/spec-todo-app/SPEC.md), [epics.md](_bmad-output/planning-artifacts/epics.md), [sprint-status.yaml](_bmad-output/implementation-artifacts/sprint-status.yaml)                                                                                                                   |
+| Build              | One spec per story, implemented, reviewed and verified before merge               | [`spec-*.md`](_bmad-output/implementation-artifacts/)                                                                                                                                                                                                                                                       |
+| Retrospectives     | Each epic reviewed against its evidence; findings became follow-up specs          | [Epic 1](_bmad-output/implementation-artifacts/epic-1-retro-2026-09-25.md), [Epic 2](_bmad-output/implementation-artifacts/epic-2-retro-2026-09-25.md), [Epic 3](_bmad-output/implementation-artifacts/epic-3-retro-2026-09-25.md), [deferred work](_bmad-output/implementation-artifacts/deferred-work.md) |
+| Course corrections | Mid-sprint changes assessed across PRD, UX and architecture                       | [2026-09-25](_bmad-output/planning-artifacts/sprint-change-proposal-2026-09-25.md), [2026-09-26](_bmad-output/planning-artifacts/sprint-change-proposal-2026-09-26.md)                                                                                                                                      |
+
+The BMad skills themselves are committed too (`.claude/skills/bmad-*`, `_bmad/`), so the exact setup is reproducible; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). This project is not affiliated with or endorsed by BMad Code, LLC.
 
 ## Prerequisites
 

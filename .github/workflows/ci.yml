@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      # The API tests use a `todos_test` database (docker/db-init creates it
+      # in the dev stack; here the service creates it directly).
+      db:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: todos
+          POSTGRES_PASSWORD: todos
+          POSTGRES_DB: todos_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U todos"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      TEST_DATABASE_URL: postgres://todos:todos@localhost:5432/todos_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      # pnpm resolves to the version pinned in package.json.
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm exec prettier --check .
+      - run: pnpm typecheck
+      - run: pnpm test
